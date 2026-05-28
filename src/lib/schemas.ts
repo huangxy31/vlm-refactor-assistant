@@ -69,4 +69,5 @@ export type ApiErrorResponse = {
   error: ApiErrorCode;
   message: string;
   details?: unknown;
+  rawText?: string;
 };

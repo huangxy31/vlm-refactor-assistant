@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { jsonrepair } from "jsonrepair";
 import { buildSystemPrompt, buildUserMessage } from "@/lib/prompt";
 import { callDeepSeek } from "@/lib/api";
 import { GenerationResponseSchema } from "@/lib/schemas";
@@ -34,11 +35,43 @@ function extractJson(raw: string): string | null {
       JSON.parse(slice);
       return slice;
     } catch {
-      // fail
+      // continue
     }
   }
 
+  // Attempt 4: repair malformed JSON with jsonrepair
+  try {
+    const repaired = jsonrepair(raw);
+    JSON.parse(repaired);
+    return repaired;
+  } catch {
+    // fail
+  }
+
   return null;
+}
+
+async function tryExtractAndValidate(text: string) {
+  const jsonText = extractJson(text);
+  if (!jsonText) return { error: "JSON_PARSE_ERROR" as const };
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch {
+    return { error: "JSON_PARSE_ERROR" as const };
+  }
+
+  const validated = GenerationResponseSchema.safeParse(parsed);
+  if (!validated.success) {
+    console.error(
+      "[API] Schema validation failed:",
+      JSON.stringify(validated.error.issues, null, 2)
+    );
+    return { error: "SCHEMA_VALIDATION" as const, details: validated.error.issues };
+  }
+
+  return { data: validated.data };
 }
 
 export async function POST(request: Request) {
@@ -127,54 +160,46 @@ export async function POST(request: Request) {
     );
   }
 
-  // JSON extraction with fallback
-  const jsonText = extractJson(result.text);
-  if (!jsonText) {
-    console.error(
-      "[API] Failed to parse JSON. Raw response:",
-      result.text.slice(0, 500)
+  // First attempt: extract + validate
+  let extracted = await tryExtractAndValidate(result.text);
+  let rawText = result.text;
+
+  // If first attempt fails, retry once more with the same prompt
+  if ("error" in extracted) {
+    console.warn(
+      `[API] First attempt failed (${extracted.error}), retrying once...`
     );
-    return NextResponse.json(
-      {
-        success: false,
-        error: "JSON_PARSE_ERROR" as ApiErrorCode,
-        message: "AI 返回格式异常，请重试",
-      },
-      { status: 502 }
-    );
+    const retryResult = await callDeepSeek(systemPrompt, userMessage);
+
+    if (retryResult.success && retryResult.finishReason !== "length") {
+      extracted = await tryExtractAndValidate(retryResult.text);
+      rawText = retryResult.text;
+    }
   }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonText);
-  } catch {
-    return NextResponse.json(
-      {
-        success: false,
-        error: "JSON_PARSE_ERROR" as ApiErrorCode,
-        message: "AI 返回格式异常，请重试",
-      },
-      { status: 502 }
-    );
+  if ("data" in extracted) {
+    return NextResponse.json({ success: true, data: extracted.data });
   }
 
-  // Zod validation
-  const validated = GenerationResponseSchema.safeParse(parsed);
-  if (!validated.success) {
-    console.error(
-      "[API] Schema validation failed:",
-      JSON.stringify(validated.error.issues, null, 2)
-    );
-    return NextResponse.json(
-      {
-        success: false,
-        error: "SCHEMA_VALIDATION" as ApiErrorCode,
-        message: "AI 返回数据结构不完整，请重试",
-        details: validated.error.issues,
-      },
-      { status: 422 }
-    );
-  }
+  // All attempts failed — return raw text for user inspection
+  console.error(
+    "[API] All parse attempts failed. Raw response:",
+    rawText.slice(0, 500)
+  );
 
-  return NextResponse.json({ success: true, data: validated.data });
+  const errorMessages: Record<string, string> = {
+    JSON_PARSE_ERROR: "AI 返回格式异常，请查看下方原始输出",
+    SCHEMA_VALIDATION: "AI 返回数据结构不完整，请查看下方原始输出",
+  };
+
+  return NextResponse.json(
+    {
+      success: false,
+      error: extracted.error,
+      message: errorMessages[extracted.error] || "AI 返回格式异常，请重试",
+      rawText,
+      details: "details" in extracted ? extracted.details : undefined,
+    },
+    { status: extracted.error === "SCHEMA_VALIDATION" ? 422 : 502 }
+  );
 }

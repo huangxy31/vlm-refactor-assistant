@@ -13,10 +13,14 @@ export default function Home() {
   const [resultData, setResultData] = useState<GenerationResponse | undefined>(
     undefined
   );
+  const [rawTextFallback, setRawTextFallback] = useState<string | undefined>(
+    undefined
+  );
 
   const handleGenerate = async () => {
     setIsGenerating(true);
     setResultData(undefined);
+    setRawTextFallback(undefined);
 
     try {
       const res = await fetch("/api/generate", {
@@ -32,6 +36,9 @@ export default function Home() {
 
       if (!json.success) {
         toast.error(json.message || "生成失败，请重试");
+        if (json.rawText) {
+          setRawTextFallback(json.rawText);
+        }
         return;
       }
 
@@ -100,6 +107,7 @@ export default function Home() {
             isGenerating={isGenerating}
             hasResult={hasResult}
             data={resultData}
+            rawTextFallback={rawTextFallback}
           />
         </div>
       </main>

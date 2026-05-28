@@ -17,6 +17,7 @@ import {
   Database,
   ShieldCheck,
   ChevronRight,
+  OctagonAlert,
 } from "lucide-react";
 import { generateMarkdownExport } from "@/lib/markdown-export";
 import type { GenerationResponse } from "@/lib/schemas";
@@ -26,6 +27,7 @@ interface ResultPanelProps {
   isGenerating: boolean;
   hasResult: boolean;
   data?: GenerationResponse;
+  rawTextFallback?: string;
 }
 
 type SectionConfig = {
@@ -82,6 +84,7 @@ export function ResultPanel({
   isGenerating,
   hasResult,
   data,
+  rawTextFallback,
 }: ResultPanelProps) {
   const docTitle = productName
     ? `${productName}重构推演白皮书.md`
@@ -135,12 +138,14 @@ export function ResultPanel({
       </div>
 
       {/* Content Area */}
-      {!hasResult && !isGenerating ? (
+      {!hasResult && !isGenerating && !rawTextFallback ? (
         <EmptyState />
       ) : isGenerating ? (
         <LoadingState />
       ) : data ? (
         <ResultContent productName={productName} data={data} />
+      ) : rawTextFallback ? (
+        <RawTextFallback rawText={rawTextFallback} />
       ) : (
         <EmptyState />
       )}
@@ -523,6 +528,37 @@ function ReadinessBadge({ readiness }: { readiness: string }) {
     >
       {labelMap[readiness] || readiness}
     </Badge>
+  );
+}
+
+function RawTextFallback({ rawText }: { rawText: string }) {
+  return (
+    <div className="flex-1 overflow-y-auto pr-1">
+      <Card className="mb-4 bg-red-400/5 border-red-400/20">
+        <CardContent className="p-4">
+          <div className="flex items-start gap-3">
+            <div className="flex items-center justify-center w-8 h-8 rounded-full bg-red-400/10 flex-shrink-0 mt-0.5">
+              <OctagonAlert className="w-4 h-4 text-red-400" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-red-400 mb-1">
+                AI 返回格式异常
+              </p>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                模型未能按预期 JSON 格式返回结果，以下为原始输出内容，可复制后手动分析或重试生成。
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+      <Card className="bg-card border border-border">
+        <CardContent className="p-4">
+          <pre className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap break-words font-mono max-h-[70vh] overflow-y-auto">
+            {rawText}
+          </pre>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
