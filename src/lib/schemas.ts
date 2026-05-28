@@ -33,6 +33,14 @@ export const HitlDesignSchema = z.object({
   fallback: z.string().min(1, "降级方案不能为空"),
 });
 
+export const SelfCheckSchema = z.object({
+  overallConfidence: z.enum(["high", "medium", "low"]),
+  scoreAlignment: z.string().min(1),
+  relevanceCheck: z.string().min(1),
+  hallucinationRisks: z.array(z.string().min(1)),
+  keyAssumptions: z.array(z.string().min(1)),
+});
+
 export const GenerationResponseSchema = z.object({
   productName: z.string().min(1),
   score: z.number().min(0).max(100),
@@ -41,8 +49,10 @@ export const GenerationResponseSchema = z.object({
   vlmNodes: z.array(VlmNodeSchema).min(1, "至少需要1个替代节点"),
   mcpIntegration: z.array(McpIntegrationSchema).min(1, "至少需要1个MCP接入方案"),
   hitlDesign: z.array(HitlDesignSchema).min(1, "至少需要1个HITL策略"),
+  selfCheck: SelfCheckSchema,
 });
 
+export type SelfCheck = z.infer<typeof SelfCheckSchema>;
 export type PainPoint = z.infer<typeof PainPointSchema>;
 export type VlmNode = z.infer<typeof VlmNodeSchema>;
 export type McpIntegration = z.infer<typeof McpIntegrationSchema>;

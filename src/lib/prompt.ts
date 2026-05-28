@@ -35,7 +35,20 @@ const JSON_SCHEMA_TEMPLATE = `{
       "strategy": "自动路由至人工复核队列，VLM输出附加推理依据和不确定性评估...（Markdown格式）",
       "fallback": "降级为传统CNN模型判定结果 + 人工双签确认"
     }
-  ]
+  ],
+  "selfCheck": {
+    "overallConfidence": "medium",
+    "scoreAlignment": "评分87分与当前方案在异常分类和缺陷检测两个环节的高替代潜力匹配，但数据接入环节的评分可能偏高，因为MES/ERP系统对接存在较大不确定性",
+    "relevanceCheck": "分析内容切实针对输入的'手机中框外观缺陷检测'方案，所有痛点、替代节点均围绕该场景展开",
+    "hallucinationRisks": [
+      "产线年产量120万件的假设基于行业典型规模推测，非用户提供的确切数据",
+      "MES/ERP数据库的具体表结构和接入方式为通用方案描述，未确认客户实际系统情况"
+    ],
+    "keyAssumptions": [
+      "假设当前模型精确率约92%（基于典型电子制造CNN分类器行业基准）",
+      "假设产线年产量约120万件（典型3C代工中大型产线规模）"
+    ]
+  }
 }`;
 
 const FEW_SHOT_EXAMPLE = `
@@ -105,6 +118,20 @@ ${JSON_SCHEMA_TEMPLATE}
 - 对比分析必须有数据支撑，使用估算值并标注估算依据
 - **关键规则**：当用户输入信息不足时，必须在 painPoints[].assumptions 中列出分析所依赖的关键假设。每个假设应包含估算值及其参考基准（如行业均值、典型场景规模），不得将不确定信息作为事实陈述
 
+# 自检要求
+在完成分析后，你必须对自己的输出进行一次独立的自我审计，并在 selfCheck 字段中记录审计结果：
+- overallConfidence: 整体可信度。
+  - high = 输入信息详实（方案描述 > 500 字），分析有充分依据，可直接参考
+  - medium = 输入有一定信息量（方案描述 100-500 字），存在推测成分，建议人工复核
+  - low = 输入信息严重不足（方案描述 < 100 字），分析高度依赖推测，结论不可靠
+  **重要规则：如果用户输入的方案描述不足 100 字，overallConfidence 必须评定为 low，不得例外。如果方案描述不足 50 字，不仅必须评定为 low，还必须在 hallucinationRisks 中明确标注"输入信息极度匮乏，所有分析均为推测"。**
+- scoreAlignment: 简要说明 score 评分与分析深度的匹配关系，如有偏差需指出
+- relevanceCheck: 确认输出内容切实针对输入的产品和方案，未偏离主题
+- hallucinationRisks: 列出输出中可能存在幻觉或过度推测的具体点（需指明具体数据或技术细节）
+- keyAssumptions: 列出支撑本分析的核心假设
+
+自检应诚实、客观，宁可指出自身不足，不可粉饰太平。如果输入信息严重不足导致可信度为 low，必须如实标注，不得为了显得"完整"而虚报 high。
+
 ${FEW_SHOT_EXAMPLE}`;
 }
 
@@ -121,4 +148,17 @@ ${productName}
 ${solutionContent}
 
 请严格按照要求的JSON格式输出完整的推演白皮书，每个分析维度至少包含3个具体条目。`;
+}
+
+export function buildRetryUserMessage(
+  productName: string,
+  solutionContent: string
+): string {
+  return `${buildUserMessage(productName, solutionContent)}
+
+## 重要提示
+上一次分析的自检结果为"低可信度"。请基于输入信息重新分析，特别注意：
+1. 对于信息不足的部分，务必在 painPoints[].assumptions 和 selfCheck.keyAssumptions 中显式标注假设及估算依据
+2. 不要编造或过度推测具体数据，不确定的地方如实说明
+3. selfCheck 中应诚实评估可信度，不可为了显得"完整"而虚报 high`;
 }

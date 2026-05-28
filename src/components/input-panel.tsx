@@ -59,6 +59,10 @@ export function InputPanel({
       onFileContentRead(content);
       setFileInfo({ name: file.name, size: file.size });
       setFileAttached(true);
+      if (!productName) {
+        const nameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
+        onProductNameChange(nameWithoutExt);
+      }
     };
     reader.onerror = () => {
       alert("文件读取失败，请重试");
@@ -248,7 +252,7 @@ export function InputPanel({
 
       {/* Generate Button */}
       <Button
-        onClick={onGenerate}
+        onClick={() => onGenerate()}
         disabled={isGenerating || (!productName && !schemeText && !fileAttached)}
         className={`
           w-full h-11 text-sm font-semibold tracking-wide transition-all duration-300

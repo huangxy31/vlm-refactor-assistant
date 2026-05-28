@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { jsonrepair } from "jsonrepair";
-import { buildSystemPrompt, buildUserMessage } from "@/lib/prompt";
+import { buildSystemPrompt, buildUserMessage, buildRetryUserMessage } from "@/lib/prompt";
 import { callDeepSeek } from "@/lib/api";
 import { GenerationResponseSchema } from "@/lib/schemas";
 import type { ApiErrorCode } from "@/lib/schemas";
@@ -174,6 +174,29 @@ export async function POST(request: Request) {
     if (retryResult.success && retryResult.finishReason !== "length") {
       extracted = await tryExtractAndValidate(retryResult.text);
       rawText = retryResult.text;
+    }
+  }
+
+  // SelfCheck low confidence → retry once with enhanced prompt
+  if ("data" in extracted) {
+    const data = extracted.data!;
+    if (data.selfCheck.overallConfidence === "low") {
+      console.warn("[API] SelfCheck confidence is low, retrying with enhanced prompt...");
+      const retryResult = await callDeepSeek(
+        systemPrompt,
+        buildRetryUserMessage(productName.trim(), solutionContent.trim())
+      );
+
+      if (retryResult.success && retryResult.finishReason !== "length") {
+        const retryExtracted = await tryExtractAndValidate(retryResult.text);
+        if ("data" in retryExtracted) {
+          extracted = retryExtracted;
+          rawText = retryResult.text;
+          console.warn(
+            `[API] Retry selfCheck confidence: ${retryExtracted.data!.selfCheck.overallConfidence}`
+          );
+        }
+      }
     }
   }
 

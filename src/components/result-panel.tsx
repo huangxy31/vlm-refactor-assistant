@@ -28,6 +28,9 @@ interface ResultPanelProps {
   hasResult: boolean;
   data?: GenerationResponse;
   rawTextFallback?: string;
+  showShortInputWarning?: boolean;
+  onForceGenerate?: () => void;
+  onDismissWarning?: () => void;
 }
 
 type SectionConfig = {
@@ -85,6 +88,9 @@ export function ResultPanel({
   hasResult,
   data,
   rawTextFallback,
+  showShortInputWarning,
+  onForceGenerate,
+  onDismissWarning,
 }: ResultPanelProps) {
   const docTitle = productName
     ? `${productName}重构推演白皮书.md`
@@ -138,7 +144,9 @@ export function ResultPanel({
       </div>
 
       {/* Content Area */}
-      {!hasResult && !isGenerating && !rawTextFallback ? (
+      {showShortInputWarning ? (
+        <ShortInputWarning onForceGenerate={onForceGenerate} onDismiss={onDismissWarning} />
+      ) : !hasResult && !isGenerating && !rawTextFallback ? (
         <EmptyState />
       ) : isGenerating ? (
         <LoadingState />
@@ -150,6 +158,47 @@ export function ResultPanel({
         <EmptyState />
       )}
     </section>
+  );
+}
+
+function ShortInputWarning({
+  onForceGenerate,
+  onDismiss,
+}: {
+  onForceGenerate?: () => void;
+  onDismiss?: () => void;
+}) {
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center gap-5 border border-amber-400/20 rounded-lg min-h-[400px] bg-amber-400/5">
+      <div className="flex items-center justify-center w-16 h-16 rounded-full bg-amber-400/10 border border-amber-400/20">
+        <AlertTriangle className="w-7 h-7 text-amber-400" />
+      </div>
+      <div className="text-center space-y-2 max-w-sm">
+        <p className="text-sm font-semibold text-foreground">
+          输入信息较少
+        </p>
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          当前方案描述不足 100 字，可能导致白皮书报告存在不合理的输出结果。建议补充更多细节后重试。
+        </p>
+      </div>
+      <div className="flex items-center gap-3">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onDismiss}
+          className="h-8 text-xs border-border text-muted-foreground hover:text-foreground cursor-pointer"
+        >
+          继续编辑
+        </Button>
+        <Button
+          size="sm"
+          onClick={onForceGenerate}
+          className="h-8 text-xs bg-amber-500 hover:bg-amber-600 text-white cursor-pointer"
+        >
+          仍然生成
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -204,6 +253,12 @@ function ResultContent({
       {/* Summary header */}
       <Card className="mb-4 bg-primary/5 border-primary/20">
         <CardContent className="p-4">
+          {data.selfCheck.overallConfidence === "low" && (
+            <div className="flex items-center gap-2 mb-3 px-3 py-2 bg-red-400/10 border border-red-400/20 rounded-md text-xs text-red-400">
+              <OctagonAlert className="w-3.5 h-3.5 flex-shrink-0" />
+              <span>此分析可信度较低，建议结合实际情况人工复核</span>
+            </div>
+          )}
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1 min-w-0">
               <p className="text-xs text-primary font-medium uppercase tracking-widest mb-1">
@@ -226,6 +281,7 @@ function ResultContent({
                 </p>
                 <p className="text-[10px] text-muted-foreground">/ 100</p>
               </div>
+              <ConfidenceBadge confidence={data.selfCheck.overallConfidence} />
             </div>
           </div>
           <div className="flex gap-3 mt-3 flex-wrap">
@@ -488,6 +544,26 @@ function SectionHeader({
         </p>
       </div>
     </div>
+  );
+}
+
+function ConfidenceBadge({ confidence }: { confidence: string }) {
+  const colorMap: Record<string, string> = {
+    high: "bg-emerald-400/10 text-emerald-400 border-emerald-400/20",
+    medium: "bg-amber-400/10 text-amber-400 border-amber-400/20",
+    low: "bg-red-400/10 text-red-400 border-red-400/20",
+  };
+  const labelMap: Record<string, string> = {
+    high: "本报告可信度：高",
+    medium: "本报告可信度：中",
+    low: "本报告可信度：低",
+  };
+  return (
+    <Badge
+      className={`text-[10px] px-1.5 border ${colorMap[confidence] || ""}`}
+    >
+      {labelMap[confidence] || `可信度：${confidence}`}
+    </Badge>
   );
 }
 

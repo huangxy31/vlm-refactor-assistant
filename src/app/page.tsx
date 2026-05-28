@@ -16,11 +16,22 @@ export default function Home() {
   const [rawTextFallback, setRawTextFallback] = useState<string | undefined>(
     undefined
   );
+  const [showShortInputWarning, setShowShortInputWarning] = useState(false);
 
-  const handleGenerate = async () => {
+  const SHORT_INPUT_THRESHOLD = 100;
+
+  const handleGenerate = async (forceGenerate = false) => {
+    if (!forceGenerate && schemeText.trim().length < SHORT_INPUT_THRESHOLD) {
+      setShowShortInputWarning(true);
+      setResultData(undefined);
+      setRawTextFallback(undefined);
+      return;
+    }
+
     setIsGenerating(true);
     setResultData(undefined);
     setRawTextFallback(undefined);
+    setShowShortInputWarning(false);
 
     try {
       const res = await fetch("/api/generate", {
@@ -52,6 +63,25 @@ export default function Home() {
 
   const handleFileContentRead = (content: string) => {
     setSchemeText(content);
+    setShowShortInputWarning(false);
+  };
+
+  const handleForceGenerate = () => {
+    handleGenerate(true);
+  };
+
+  const handleDismissWarning = () => {
+    setShowShortInputWarning(false);
+  };
+
+  const handleProductNameChange = (v: string) => {
+    setProductName(v);
+    setShowShortInputWarning(false);
+  };
+
+  const handleSchemeTextChange = (v: string) => {
+    setSchemeText(v);
+    setShowShortInputWarning(false);
   };
 
   const hasResult = !!resultData;
@@ -91,9 +121,9 @@ export default function Home() {
         <div className="w-[380px] flex-shrink-0 border-r border-border bg-card/30 p-5 overflow-y-auto">
           <InputPanel
             productName={productName}
-            onProductNameChange={setProductName}
+            onProductNameChange={handleProductNameChange}
             schemeText={schemeText}
-            onSchemeTextChange={setSchemeText}
+            onSchemeTextChange={handleSchemeTextChange}
             onFileContentRead={handleFileContentRead}
             onGenerate={handleGenerate}
             isGenerating={isGenerating}
@@ -108,6 +138,9 @@ export default function Home() {
             hasResult={hasResult}
             data={resultData}
             rawTextFallback={rawTextFallback}
+            showShortInputWarning={showShortInputWarning}
+            onForceGenerate={handleForceGenerate}
+            onDismissWarning={handleDismissWarning}
           />
         </div>
       </main>
