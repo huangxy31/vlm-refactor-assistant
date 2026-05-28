@@ -8,6 +8,7 @@ export const PainPointSchema = z.object({
   severity: SeverityEnum,
   analysis: z.string().min(1, "痛点分析不能为空"),
   longTailRisk: z.string().min(1, "长尾风险评估不能为空"),
+  assumptions: z.array(z.string()).optional(),
 });
 
 export const VlmNodeSchema = z.object({

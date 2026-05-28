@@ -284,6 +284,21 @@ function ResultContent({
                         <RenderMarkdown content={p.longTailRisk} />
                       </div>
                     </div>
+                    {p.assumptions && p.assumptions.length > 0 && (
+                      <div className="mt-2 p-2 bg-amber-400/5 border border-amber-400/10 rounded">
+                        <p className="text-[10px] text-amber-400/70 uppercase tracking-wider mb-0.5">
+                          假设声明
+                        </p>
+                        <ul className="text-[11px] text-muted-foreground leading-relaxed space-y-0.5 list-none">
+                          {p.assumptions.map((a, ai) => (
+                            <li key={ai} className="flex items-start gap-1.5">
+                              <span className="text-amber-400/50 flex-shrink-0 select-none">-</span>
+                              <span>{a}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}

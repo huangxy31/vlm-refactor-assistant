@@ -35,16 +35,17 @@ export function generateMarkdownExport(
   lines.push("## 痛点分析");
   lines.push("");
   lines.push(
-    `| # | 痛点 | 严重程度 | 分析 | 长尾风险评估 |`
+    `| # | 痛点 | 严重程度 | 分析 | 长尾风险评估 | 假设声明 |`
   );
   lines.push(
-    `|---|---|---|---|---|`
+    `|---|---|---|---|---|---|`
   );
   data.painPoints.forEach((p, i) => {
     const analysis = p.analysis.replace(/\n/g, "<br>");
     const longTail = p.longTailRisk.replace(/\n/g, "<br>");
+    const assumptions = p.assumptions?.join("; ") || "-";
     lines.push(
-      `| ${i + 1} | ${p.title} | ${severityLabel[p.severity]} | ${analysis} | ${longTail} |`
+      `| ${i + 1} | ${p.title} | ${severityLabel[p.severity]} | ${analysis} | ${longTail} | ${assumptions} |`
     );
   });
   lines.push("");
