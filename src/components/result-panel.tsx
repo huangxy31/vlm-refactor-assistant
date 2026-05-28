@@ -113,7 +113,7 @@ export function ResultPanel({
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${productName || "重构推演白皮书"}.md`;
+    a.download = docTitle;
     a.click();
     URL.revokeObjectURL(url);
   };
