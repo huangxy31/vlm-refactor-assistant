@@ -2,6 +2,7 @@ import { jsonrepair } from "jsonrepair";
 import { buildSystemPrompt, buildUserMessage, buildRetryUserMessage } from "@/lib/prompt";
 import { callDeepSeek } from "@/lib/api";
 import { GenerationResponseSchema } from "@/lib/schemas";
+import { MAX_INPUT_LENGTH, MAX_PRODUCT_NAME_LENGTH } from "@/lib/constants";
 import type { ApiErrorCode, StreamEvent } from "@/lib/schemas";
 
 const ERROR_SUGGESTIONS: Record<string, string> = {
@@ -131,6 +132,34 @@ export async function POST(request: Request) {
         success: false,
         error: "INPUT_VALIDATION" as ApiErrorCode,
         message: "请提供方案详情",
+      }),
+      {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
+
+  if (productName.trim().length > MAX_PRODUCT_NAME_LENGTH) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "INPUT_VALIDATION" as ApiErrorCode,
+        message: `产品名称不能超过 ${MAX_PRODUCT_NAME_LENGTH} 个字符`,
+      }),
+      {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
+
+  if (solutionContent.trim().length > MAX_INPUT_LENGTH) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "INPUT_VALIDATION" as ApiErrorCode,
+        message: `方案详情不能超过 ${MAX_INPUT_LENGTH} 个字符`,
       }),
       {
         status: 400,

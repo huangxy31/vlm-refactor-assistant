@@ -1,0 +1,2 @@
+export const MAX_INPUT_LENGTH = 10000;
+export const MAX_PRODUCT_NAME_LENGTH = 200;

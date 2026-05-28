@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -14,6 +15,7 @@ import {
   Loader2,
   Sparkles,
 } from "lucide-react";
+import { MAX_INPUT_LENGTH, MAX_PRODUCT_NAME_LENGTH } from "@/lib/constants";
 
 interface InputPanelProps {
   productName: string;
@@ -56,6 +58,12 @@ export function InputPanel({
     const reader = new FileReader();
     reader.onload = () => {
       const content = reader.result as string;
+      if (content.length > MAX_INPUT_LENGTH) {
+        toast.error(
+          `文件内容为 ${content.length.toLocaleString()} 字符，超过 ${MAX_INPUT_LENGTH.toLocaleString()} 字符的限制，请精简后重新上传`
+        );
+        return;
+      }
       onFileContentRead(content);
       setFileInfo({ name: file.name, size: file.size });
       setFileAttached(true);
@@ -126,9 +134,13 @@ export function InputPanel({
         <Input
           value={productName}
           onChange={(e) => onProductNameChange(e.target.value)}
+          maxLength={MAX_PRODUCT_NAME_LENGTH}
           placeholder="例如：智能质检视觉平台 v3.0"
           className="bg-input border-border text-foreground placeholder:text-muted-foreground/50 focus-visible:ring-primary/40 focus-visible:border-primary/60 h-10 text-sm"
         />
+        <p className="text-[11px] text-muted-foreground/60 text-right">
+          {productName.length}/{MAX_PRODUCT_NAME_LENGTH}
+        </p>
       </div>
 
       {/* Scheme Detail Tabs */}
@@ -158,16 +170,22 @@ export function InputPanel({
               <Textarea
                 value={schemeText}
                 onChange={(e) => onSchemeTextChange(e.target.value)}
+                maxLength={MAX_INPUT_LENGTH}
                 placeholder={`## 工作流概述\n描述当前传统视觉方案的整体流程...\n\n# 核心痛点\n### 长尾场景处理\n- 无法覆盖低频异常类别\n- 标注数据积累成本高\n\n## 数据集依赖\n现有模型对特定光照条件高度敏感...`}
                 className="absolute inset-0 w-full h-full min-h-[240px] resize-none bg-input border-border text-foreground placeholder:text-muted-foreground/40 focus-visible:ring-primary/40 focus-visible:border-primary/60 text-sm leading-relaxed font-mono text-[12.5px]"
               />
             </div>
-            <p className="text-[11px] text-muted-foreground/70 leading-relaxed">
-              支持使用 Markdown 语法输入，推荐使用{" "}
-              <code className="bg-muted px-1 py-0.5 rounded text-primary/80 font-mono text-[10px]">#</code>、
-              <code className="bg-muted px-1 py-0.5 rounded text-primary/80 font-mono text-[10px]">##</code>{" "}
-              标注工作流与痛点层级
-            </p>
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] text-muted-foreground/70 leading-relaxed">
+                支持 Markdown 语法，推荐使用{" "}
+                <code className="bg-muted px-1 py-0.5 rounded text-primary/80 font-mono text-[10px]">#</code>、
+                <code className="bg-muted px-1 py-0.5 rounded text-primary/80 font-mono text-[10px]">##</code>{" "}
+                标注层级
+              </p>
+              <p className={`text-[11px] flex-shrink-0 ml-3 ${schemeText.length > MAX_INPUT_LENGTH * 0.9 ? "text-amber-400" : "text-muted-foreground/60"}`}>
+                {schemeText.length.toLocaleString()}/{MAX_INPUT_LENGTH.toLocaleString()}
+              </p>
+            </div>
           </TabsContent>
 
           {/* Tab: File Upload */}
@@ -211,7 +229,7 @@ export function InputPanel({
                   </p>
                   <p className="text-xs text-muted-foreground">
                     仅支持{" "}
-                    <span className="text-primary font-mono">.md</span> / <span className="text-primary font-mono">.txt</span> 文件，最大 10 MB
+                    <span className="text-primary font-mono">.md</span> / <span className="text-primary font-mono">.txt</span> 文件，最大 10 MB，文本不超过 {MAX_INPUT_LENGTH.toLocaleString()} 字符
                   </p>
                 </div>
               </div>
