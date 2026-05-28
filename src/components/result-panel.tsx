@@ -307,7 +307,7 @@ function ResultContent({
               <h2 className="text-base font-semibold text-foreground leading-snug">
                 {data.productName || productName || "产品"}重构推演评估报告
               </h2>
-              <div className="text-xs text-muted-foreground mt-1.5 leading-relaxed max-w-lg">
+              <div className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
                 <RenderMarkdown content={data.summary} />
               </div>
             </div>

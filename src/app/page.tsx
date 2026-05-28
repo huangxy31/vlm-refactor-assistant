@@ -176,7 +176,7 @@ export default function Home() {
   const hasResult = !!resultData;
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="h-screen bg-background flex flex-col overflow-hidden">
       {/* Top nav bar */}
       <header className="flex items-center justify-between px-6 h-12 border-b border-border bg-card/50 backdrop-blur-sm flex-shrink-0">
         <div className="flex items-center gap-3">
@@ -207,7 +207,7 @@ export default function Home() {
       {/* Main layout */}
       <main className="flex-1 flex overflow-hidden">
         {/* Left panel */}
-        <div className="w-[380px] flex-shrink-0 border-r border-border bg-card/30 p-5 overflow-y-auto">
+        <div className="w-[380px] flex-shrink-0 border-r border-border bg-card/30 p-5 overflow-hidden">
           <InputPanel
             productName={productName}
             onProductNameChange={handleProductNameChange}

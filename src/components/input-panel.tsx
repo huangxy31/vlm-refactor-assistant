@@ -102,7 +102,7 @@ export function InputPanel({
   };
 
   return (
-    <aside className="flex flex-col gap-6 h-full">
+    <aside className="grid gap-6 h-full overflow-hidden" style={{ gridTemplateRows: 'auto auto 1fr auto' }}>
       {/* Header */}
       <div className="flex items-center gap-2.5">
         <div className="flex items-center justify-center w-8 h-8 rounded-md bg-primary/10 border border-primary/20">
@@ -132,11 +132,11 @@ export function InputPanel({
       </div>
 
       {/* Scheme Detail Tabs */}
-      <div className="flex flex-col gap-2 flex-1">
+      <div className="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto">
         <Label className="text-xs font-medium text-muted-foreground uppercase tracking-widest">
           方案详情
         </Label>
-        <Tabs defaultValue="direct" className="flex flex-col flex-1 gap-0">
+        <Tabs defaultValue="direct" className="flex flex-col flex-1 gap-0 min-h-0">
           <TabsList className="w-full bg-muted border border-border rounded-md h-9 p-0.5">
             <TabsTrigger
               value="direct"
@@ -153,13 +153,15 @@ export function InputPanel({
           </TabsList>
 
           {/* Tab: Direct Input */}
-          <TabsContent value="direct" className="mt-3 flex-1 flex flex-col gap-1.5">
-            <Textarea
-              value={schemeText}
-              onChange={(e) => onSchemeTextChange(e.target.value)}
-              placeholder={`## 工作流概述\n描述当前传统视觉方案的整体流程...\n\n# 核心痛点\n### 长尾场景处理\n- 无法覆盖低频异常类别\n- 标注数据积累成本高\n\n## 数据集依赖\n现有模型对特定光照条件高度敏感...`}
-              className="flex-1 min-h-[240px] resize-none bg-input border-border text-foreground placeholder:text-muted-foreground/40 focus-visible:ring-primary/40 focus-visible:border-primary/60 text-sm leading-relaxed font-mono text-[12.5px]"
-            />
+          <TabsContent value="direct" className="mt-3 flex-1 flex flex-col gap-1.5 min-h-0">
+            <div className="flex-1 min-h-0 relative">
+              <Textarea
+                value={schemeText}
+                onChange={(e) => onSchemeTextChange(e.target.value)}
+                placeholder={`## 工作流概述\n描述当前传统视觉方案的整体流程...\n\n# 核心痛点\n### 长尾场景处理\n- 无法覆盖低频异常类别\n- 标注数据积累成本高\n\n## 数据集依赖\n现有模型对特定光照条件高度敏感...`}
+                className="absolute inset-0 w-full h-full min-h-[240px] resize-none bg-input border-border text-foreground placeholder:text-muted-foreground/40 focus-visible:ring-primary/40 focus-visible:border-primary/60 text-sm leading-relaxed font-mono text-[12.5px]"
+              />
+            </div>
             <p className="text-[11px] text-muted-foreground/70 leading-relaxed">
               支持使用 Markdown 语法输入，推荐使用{" "}
               <code className="bg-muted px-1 py-0.5 rounded text-primary/80 font-mono text-[10px]">#</code>、
@@ -169,7 +171,7 @@ export function InputPanel({
           </TabsContent>
 
           {/* Tab: File Upload */}
-          <TabsContent value="upload" className="mt-3 flex-1 flex flex-col">
+          <TabsContent value="upload" className="mt-3 flex-1 flex flex-col min-h-0">
             <input
               ref={fileInputRef}
               type="file"
