@@ -78,6 +78,22 @@ export type ApiErrorResponse = {
   success: false;
   error: ApiErrorCode;
   message: string;
+  suggestion?: string;
+  retryAttempted?: number;
   details?: unknown;
   rawText?: string;
 };
+
+export type StreamProgressEvent = {
+  type: "progress";
+  stage: "generating" | "retrying";
+  attempt?: number;
+  maxRetries?: number;
+  message: string;
+};
+
+export type StreamResultEvent = {
+  type: "result";
+} & (ApiSuccessResponse | ApiErrorResponse);
+
+export type StreamEvent = StreamProgressEvent | StreamResultEvent;

@@ -4,7 +4,14 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { InputPanel } from "@/components/input-panel";
 import { ResultPanel } from "@/components/result-panel";
-import type { GenerationResponse } from "@/lib/schemas";
+import { getCachedResult, setCachedResult } from "@/lib/cache";
+import type { GenerationResponse, StreamEvent } from "@/lib/schemas";
+
+export interface RetryStatus {
+  attempt: number;
+  maxRetries: number;
+  message: string;
+}
 
 export default function Home() {
   const [productName, setProductName] = useState("");
@@ -17,6 +24,11 @@ export default function Home() {
     undefined
   );
   const [showShortInputWarning, setShowShortInputWarning] = useState(false);
+  const [retryStatus, setRetryStatus] = useState<RetryStatus | null>(null);
+  const [isCachedResult, setIsCachedResult] = useState(false);
+  const [errorSuggestion, setErrorSuggestion] = useState<string | undefined>(
+    undefined
+  );
 
   const SHORT_INPUT_THRESHOLD = 100;
 
@@ -25,6 +37,7 @@ export default function Home() {
       setShowShortInputWarning(true);
       setResultData(undefined);
       setRawTextFallback(undefined);
+      setRetryStatus(null);
       return;
     }
 
@@ -32,6 +45,9 @@ export default function Home() {
     setResultData(undefined);
     setRawTextFallback(undefined);
     setShowShortInputWarning(false);
+    setIsCachedResult(false);
+    setErrorSuggestion(undefined);
+    setRetryStatus(null);
 
     try {
       const res = await fetch("/api/generate", {
@@ -43,19 +59,92 @@ export default function Home() {
         }),
       });
 
-      const json = await res.json();
-
-      if (!json.success) {
-        toast.error(json.message || "生成失败，请重试");
-        if (json.rawText) {
+      if (!res.ok) {
+        // Non-streaming error (e.g. 400 validation)
+        const json = await res.json().catch(() => null);
+        toast.error(json?.message || "生成失败，请重试");
+        if (json?.rawText) {
           setRawTextFallback(json.rawText);
         }
+        setIsGenerating(false);
         return;
       }
 
-      setResultData(json.data);
+      const reader = res.body?.getReader();
+      if (!reader) {
+        toast.error("无法读取服务响应");
+        setIsGenerating(false);
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          let event: StreamEvent;
+          try {
+            event = JSON.parse(line);
+          } catch {
+            continue;
+          }
+
+          if (event.type === "progress") {
+            setRetryStatus({
+              attempt: event.attempt ?? 0,
+              maxRetries: event.maxRetries ?? 0,
+              message: event.message,
+            });
+          } else if (event.type === "result") {
+            if (!event.success) {
+              setErrorSuggestion(event.suggestion);
+              if (event.rawText) {
+                setRawTextFallback(event.rawText);
+              }
+
+              const cached = getCachedResult(
+                productName.trim(),
+                schemeText.trim()
+              );
+              if (cached) {
+                setResultData(cached);
+                setIsCachedResult(true);
+                toast.warning("AI 服务暂时不可用，已为您加载缓存数据");
+                return;
+              }
+
+              toast.error(event.message || "生成失败，请重试");
+              return;
+            }
+
+            setCachedResult(
+              productName.trim(),
+              schemeText.trim(),
+              event.data
+            );
+            setResultData(event.data);
+          }
+        }
+      }
     } catch {
-      toast.error("网络请求失败，请检查网络连接后重试");
+      setRetryStatus(null);
+
+      const cached = getCachedResult(productName.trim(), schemeText.trim());
+      if (cached) {
+        setResultData(cached);
+        setIsCachedResult(true);
+        toast.warning("网络请求失败，已为您加载缓存数据");
+      } else {
+        toast.error("网络请求失败，请检查网络连接后重试");
+      }
     } finally {
       setIsGenerating(false);
     }
@@ -139,6 +228,9 @@ export default function Home() {
             data={resultData}
             rawTextFallback={rawTextFallback}
             showShortInputWarning={showShortInputWarning}
+            retryStatus={retryStatus}
+            isCachedResult={isCachedResult}
+            errorSuggestion={errorSuggestion}
             onForceGenerate={handleForceGenerate}
             onDismissWarning={handleDismissWarning}
           />

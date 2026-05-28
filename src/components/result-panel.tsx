@@ -18,7 +18,9 @@ import {
   ShieldCheck,
   ChevronRight,
   OctagonAlert,
+  Loader2,
 } from "lucide-react";
+import type { RetryStatus } from "@/app/page";
 import { generateMarkdownExport } from "@/lib/markdown-export";
 import type { GenerationResponse } from "@/lib/schemas";
 
@@ -29,6 +31,9 @@ interface ResultPanelProps {
   data?: GenerationResponse;
   rawTextFallback?: string;
   showShortInputWarning?: boolean;
+  retryStatus?: RetryStatus | null;
+  isCachedResult?: boolean;
+  errorSuggestion?: string;
   onForceGenerate?: () => void;
   onDismissWarning?: () => void;
 }
@@ -89,6 +94,9 @@ export function ResultPanel({
   data,
   rawTextFallback,
   showShortInputWarning,
+  retryStatus,
+  isCachedResult,
+  errorSuggestion,
   onForceGenerate,
   onDismissWarning,
 }: ResultPanelProps) {
@@ -149,11 +157,11 @@ export function ResultPanel({
       ) : !hasResult && !isGenerating && !rawTextFallback ? (
         <EmptyState />
       ) : isGenerating ? (
-        <LoadingState />
+        <LoadingState retryStatus={retryStatus} />
       ) : data ? (
-        <ResultContent productName={productName} data={data} />
+        <ResultContent productName={productName} data={data} isCachedResult={isCachedResult} />
       ) : rawTextFallback ? (
-        <RawTextFallback rawText={rawTextFallback} />
+        <RawTextFallback rawText={rawTextFallback} suggestion={errorSuggestion} />
       ) : (
         <EmptyState />
       )}
@@ -220,9 +228,29 @@ function EmptyState() {
   );
 }
 
-function LoadingState() {
+function LoadingState({ retryStatus }: { retryStatus?: RetryStatus | null }) {
+  const showProgress = retryStatus && retryStatus.message;
+  const isRetrying = showProgress && retryStatus!.attempt > 0;
+
   return (
     <div className="flex-1 flex flex-col gap-3 min-h-[400px]">
+      {showProgress && (
+        <div
+          className={`flex items-center gap-2 px-4 py-3 border rounded-lg text-sm ${
+            isRetrying
+              ? "bg-amber-400/5 border-amber-400/20 text-amber-400 animate-pulse"
+              : "bg-primary/5 border-primary/20 text-primary"
+          }`}
+        >
+          <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />
+          <span className="flex-1">{retryStatus!.message}</span>
+          {isRetrying && (
+            <span className="text-xs text-muted-foreground flex-shrink-0">
+              {retryStatus!.attempt}/{retryStatus!.maxRetries}
+            </span>
+          )}
+        </div>
+      )}
       {[...Array(4)].map((_, i) => (
         <div
           key={i}
@@ -234,12 +262,23 @@ function LoadingState() {
   );
 }
 
+function CachedResultBanner() {
+  return (
+    <div className="flex items-center gap-2 mb-4 px-4 py-3 bg-amber-400/10 border border-amber-400/20 rounded-lg text-xs text-amber-400">
+      <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+      <span>当前显示为缓存数据，AI 服务暂时不可用，部分结果可能不是最新的。</span>
+    </div>
+  );
+}
+
 function ResultContent({
   productName,
   data,
+  isCachedResult,
 }: {
   productName: string;
   data: GenerationResponse;
+  isCachedResult?: boolean;
 }) {
   const stats = [
     { label: "识别痛点", value: `${data.painPoints.length} 项` },
@@ -250,6 +289,7 @@ function ResultContent({
 
   return (
     <div className="flex-1 overflow-y-auto pr-1">
+      {isCachedResult && <CachedResultBanner />}
       {/* Summary header */}
       <Card className="mb-4 bg-primary/5 border-primary/20">
         <CardContent className="p-4">
@@ -607,7 +647,7 @@ function ReadinessBadge({ readiness }: { readiness: string }) {
   );
 }
 
-function RawTextFallback({ rawText }: { rawText: string }) {
+function RawTextFallback({ rawText, suggestion }: { rawText: string; suggestion?: string }) {
   return (
     <div className="flex-1 overflow-y-auto pr-1">
       <Card className="mb-4 bg-red-400/5 border-red-400/20">
@@ -621,7 +661,15 @@ function RawTextFallback({ rawText }: { rawText: string }) {
                 AI 返回格式异常
               </p>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                模型未能按预期 JSON 格式返回结果，以下为原始输出内容，可复制后手动分析或重试生成。
+                模型未能按预期 JSON 格式返回结果
+              </p>
+              {suggestion && (
+                <p className="text-xs text-amber-400 mt-2 leading-relaxed">
+                  建议：{suggestion}
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground/70 mt-1">
+                以下为原始输出内容，可复制后手动分析或重试生成。
               </p>
             </div>
           </div>
