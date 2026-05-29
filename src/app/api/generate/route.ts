@@ -184,13 +184,16 @@ export async function POST(request: Request) {
       send({
         type: "progress",
         stage: "generating",
-        message: "正在调用 AI 服务...",
+        message: "AI 正在深度分析您的方案…",
       });
 
       await callDeepSeekStream(
         systemPrompt,
         userMessage,
         {
+          onThinking: (token: string) => {
+            send({ type: "thinking", token });
+          },
           onToken: (token: string) => {
             send({ type: "token", token });
           },

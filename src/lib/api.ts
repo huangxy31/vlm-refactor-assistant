@@ -21,6 +21,7 @@ export interface DeepSeekCallbacks {
 }
 
 export interface DeepSeekStreamCallbacks {
+  onThinking?: (token: string) => void;
   onToken: (token: string) => void;
   onDone: (fullText: string, finishReason: "stop" | "length") => void;
   onError: (error: DeepSeekError) => void;
@@ -353,6 +354,9 @@ async function attemptStreamCall(
           if (!choice) continue;
 
           const delta = choice.delta as Record<string, unknown> | undefined;
+          if (delta?.reasoning_content && typeof delta.reasoning_content === "string") {
+            callbacks.onThinking?.(delta.reasoning_content);
+          }
           if (delta?.content && typeof delta.content === "string") {
             fullText += delta.content;
             callbacks.onToken(delta.content);

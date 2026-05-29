@@ -92,6 +92,11 @@ export type StreamProgressEvent = {
   message: string;
 };
 
+export type StreamThinkingEvent = {
+  type: "thinking";
+  token: string;
+};
+
 export type StreamTokenEvent = {
   type: "token";
   token: string;
@@ -101,7 +106,7 @@ export type StreamResultEvent = {
   type: "result";
 } & (ApiSuccessResponse | ApiErrorResponse);
 
-export type StreamEvent = StreamProgressEvent | StreamTokenEvent | StreamResultEvent;
+export type StreamEvent = StreamProgressEvent | StreamThinkingEvent | StreamTokenEvent | StreamResultEvent;
 
 /** Partial generation result for progressive section reveal during streaming. */
 export type PartialGenerationResponse = {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ import {
   Database,
   ShieldCheck,
   ChevronRight,
+  ChevronDown,
   OctagonAlert,
   Loader2,
 } from "lucide-react";
@@ -39,6 +40,8 @@ interface ResultPanelProps {
   data?: GenerationResponse;
   rawTextFallback?: string;
   streamingText?: string;
+  thinkingText?: string;
+  completedSections?: Set<string>;
   partialResult?: PartialGenerationResponse;
   showShortInputWarning?: boolean;
   retryStatus?: RetryStatus | null;
@@ -104,6 +107,8 @@ export function ResultPanel({
   data,
   rawTextFallback,
   streamingText,
+  thinkingText,
+  completedSections,
   partialResult,
   showShortInputWarning,
   retryStatus,
@@ -116,7 +121,7 @@ export function ResultPanel({
     ? `${productName}重构推演白皮书.md`
     : "重构推演白皮书.md";
 
-  const isStreaming = isGenerating && streamingText;
+  const isStreaming = isGenerating && (streamingText || thinkingText);
   const exportDisabled = !hasResult || !data || !!isStreaming;
 
   const handleExport = () => {
@@ -150,8 +155,8 @@ export function ResultPanel({
           )}
           {isGenerating && !isStreaming && (
             <span className="flex items-center gap-1 text-[11px] text-primary animate-pulse">
-              <span className="w-1.5 h-1.5 rounded-full bg-primary animate-ping" />
-              生成中
+              <Loader2 className="w-3 h-3 animate-spin" />
+              正在连接 AI 服务…
             </span>
           )}
           {hasResult && !isGenerating && (
@@ -183,6 +188,8 @@ export function ResultPanel({
         ) : isStreaming ? (
           <StreamingState
             partialResult={partialResult}
+            thinkingText={thinkingText}
+            completedSections={completedSections}
             retryStatus={retryStatus}
           />
         ) : isGenerating ? (
@@ -259,24 +266,39 @@ function EmptyState() {
 function LoadingState({ retryStatus }: { retryStatus?: RetryStatus | null }) {
   const showProgress = retryStatus && retryStatus.message;
   const isRetrying = showProgress && retryStatus!.attempt > 0;
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => setElapsed((p) => p + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   return (
     <div className="flex-1 flex flex-col gap-3 min-h-[400px]">
-      {showProgress && (
+      {/* Progress / status banner */}
+      {(showProgress || !isRetrying) && (
         <div
-          className={`flex items-center gap-2 px-4 py-3 border rounded-lg text-sm ${
+          className={`flex items-center gap-3 px-4 py-4 border rounded-lg ${
             isRetrying
               ? "bg-amber-400/5 border-amber-400/20 text-amber-400 animate-pulse"
-              : "bg-primary/5 border-primary/20 text-primary"
+              : "bg-primary/5 border-primary/20"
           }`}
         >
-          <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />
-          <span className="flex-1">{retryStatus!.message}</span>
-          {isRetrying && (
-            <span className="text-xs text-muted-foreground flex-shrink-0">
-              {retryStatus!.attempt}/{retryStatus!.maxRetries}
-            </span>
-          )}
+          <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 flex-shrink-0">
+            <Loader2 className="w-5 h-5 animate-spin text-primary" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-foreground">
+              {isRetrying
+                ? retryStatus!.message
+                : "AI 正在深度分析您的方案…"}
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {isRetrying
+                ? `${retryStatus!.attempt}/${retryStatus!.maxRetries}`
+                : `复杂推演预计需要 20-30 秒 · 已等待 ${elapsed}s`}
+            </p>
+          </div>
         </div>
       )}
       {[...Array(4)].map((_, i) => (
@@ -292,14 +314,19 @@ function LoadingState({ retryStatus }: { retryStatus?: RetryStatus | null }) {
 
 function StreamingState({
   partialResult,
+  thinkingText,
+  completedSections,
   retryStatus,
 }: {
   partialResult?: PartialGenerationResponse;
+  thinkingText?: string;
+  completedSections?: Set<string>;
   retryStatus?: RetryStatus | null;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const userScrolledUpRef = useRef(false);
+  const [userScrolledUp, setUserScrolledUp] = useState(false);
 
   useEffect(() => {
     const sentinel = sentinelRef.current;
@@ -307,6 +334,7 @@ function StreamingState({
     const observer = new IntersectionObserver(
       ([entry]) => {
         userScrolledUpRef.current = !entry.isIntersecting;
+        setUserScrolledUp(!entry.isIntersecting);
       },
       { threshold: 0.1 }
     );
@@ -315,10 +343,16 @@ function StreamingState({
   }, []);
 
   useEffect(() => {
-    if (!userScrolledUpRef.current && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (!userScrolledUpRef.current && sentinelRef.current) {
+      sentinelRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
     }
   });
+
+  const jumpToLatest = () => {
+    userScrolledUpRef.current = false;
+    setUserScrolledUp(false);
+    sentinelRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  };
 
   const sectionKeys = [
     "painPoints",
@@ -326,6 +360,90 @@ function StreamingState({
     "mcpIntegration",
     "hitlDesign",
   ] as const;
+
+  const hasContent = !!(
+    partialResult?.summary ||
+    sectionKeys.some(
+      (k) => (partialResult?.[k] as unknown[] | undefined)?.length
+    )
+  );
+  const [userExpandedThinking, setUserExpandedThinking] = useState(false);
+  const thinkingExpanded = thinkingText && (!hasContent || userExpandedThinking);
+
+  // Thinking display: buffer → filter → delay 5s → typewriter
+  const thinkingStartRef = useRef(0);
+  const [revealedLen, setRevealedLen] = useState(0);
+  const thinkingContentRef = useRef<HTMLDivElement>(null);
+  const thinkingSentinelRef = useRef<HTMLDivElement>(null);
+  const thinkingUserScrolledUpRef = useRef(false);
+
+  // Track when thinking starts
+  useEffect(() => {
+    if (thinkingText && thinkingStartRef.current === 0) {
+      thinkingStartRef.current = Date.now();
+    }
+    if (!thinkingText) {
+      thinkingStartRef.current = 0;
+      setRevealedLen(0);
+    }
+  }, [thinkingText]);
+
+  // Filtered + buffered display text
+  const displayThinkingText = thinkingText ? sanitizeThinkingText(thinkingText) : "";
+  const bufferElapsed = thinkingStartRef.current > 0
+    ? Date.now() - thinkingStartRef.current
+    : 0;
+  const canStartReveal = bufferElapsed > 5000 || hasContent;
+
+  // When hasContent flips to true, freeze revealedLen (no more thinking reveal)
+  const frozenRef = useRef(false);
+  useEffect(() => {
+    if (hasContent) frozenRef.current = true;
+  }, [hasContent]);
+
+  // IntersectionObserver for thinking content scroll anchoring
+  useEffect(() => {
+    const sentinel = thinkingSentinelRef.current;
+    if (!sentinel) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        thinkingUserScrolledUpRef.current = !entry.isIntersecting;
+      },
+      { threshold: 0.1, root: thinkingContentRef.current }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [thinkingExpanded]);
+
+  // Typewriter reveal — only after buffer delay
+  useEffect(() => {
+    if (!displayThinkingText || frozenRef.current) return;
+    if (!canStartReveal) return;
+
+    const target = displayThinkingText.length;
+    if (revealedLen >= target) return;
+
+    const id = setInterval(() => {
+      setRevealedLen((prev) => {
+        const next = prev + 3;
+        if (next >= target) {
+          clearInterval(id);
+          return target;
+        }
+        return next;
+      });
+    }, 30);
+
+    return () => clearInterval(id);
+  }, [displayThinkingText, canStartReveal, revealedLen]);
+
+  // Auto-scroll thinking content as text reveals — only if user is at bottom
+  useEffect(() => {
+    const sentinel = thinkingSentinelRef.current;
+    if (sentinel && thinkingExpanded && !thinkingUserScrolledUpRef.current) {
+      sentinel.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+  }, [revealedLen, thinkingExpanded]);
 
   return (
     <div
@@ -343,26 +461,108 @@ function StreamingState({
         </div>
       )}
 
-      {/* Summary skeleton */}
-      <Card className="bg-primary/5 border-primary/20">
-        <CardContent className="p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex-1 min-w-0 space-y-2">
-              <div className="h-3 w-20 bg-primary/20 rounded animate-pulse" />
-              <div className="h-4 w-48 bg-primary/20 rounded animate-pulse" />
-              <div className="space-y-1.5 mt-2">
-                <div className="h-2.5 bg-muted-foreground/10 rounded animate-pulse" />
-                <div className="h-2.5 bg-muted-foreground/10 rounded animate-pulse w-5/6" />
-                <div className="h-2.5 bg-muted-foreground/10 rounded animate-pulse w-2/3" />
+      {/* Thinking card — shows reasoning_content until real output arrives */}
+      {thinkingText && (
+        <Card
+          className={`border transition-colors duration-500 ${
+            hasContent
+              ? "bg-muted/20 border-border/50"
+              : "bg-indigo-400/5 border-indigo-400/20"
+          }`}
+        >
+          <CardContent className="p-3">
+            <button
+              type="button"
+              onClick={() => setUserExpandedThinking(!userExpandedThinking)}
+              className="flex items-center gap-2 w-full text-left"
+            >
+              <BrainCircuit
+                className={`w-4 h-4 flex-shrink-0 ${
+                  hasContent ? "text-muted-foreground/50" : "text-indigo-400"
+                }`}
+              />
+              <span
+                className={`text-xs font-medium flex-1 ${
+                  hasContent ? "text-muted-foreground/60" : "text-indigo-400"
+                }`}
+              >
+                {hasContent ? "AI 分析完成，白皮书生成中…" : "AI 正在分析您的方案…"}
+              </span>
+              {!hasContent && (
+                <Loader2 className="w-3 h-3 animate-spin text-indigo-400/60 flex-shrink-0" />
+              )}
+              <ChevronRight
+                className={`w-3.5 h-3.5 text-muted-foreground/50 flex-shrink-0 transition-transform ${
+                  thinkingExpanded ? "rotate-90" : ""
+                }`}
+              />
+            </button>
+            {thinkingExpanded && (
+              <div
+                ref={thinkingContentRef}
+                className="mt-2 text-[11px] text-muted-foreground/60 leading-relaxed font-mono max-h-40 overflow-y-auto whitespace-pre-wrap border-t border-border/50 pt-2"
+              >
+                {displayThinkingText.slice(0, revealedLen)}
+                <div ref={thinkingSentinelRef} className="h-px" />
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Summary — skeleton or real content */}
+      {partialResult?.summary ? (
+        <Card className="bg-primary/5 border-primary/20">
+          <CardContent className="p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-primary font-medium uppercase tracking-widest mb-1">
+                  执行摘要
+                </p>
+                <h2 className="text-base font-semibold text-foreground leading-snug">
+                  {partialResult.productName || "产品"}重构推演评估报告
+                </h2>
+                <div className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
+                  <RenderMarkdown content={partialResult.summary} />
+                </div>
+              </div>
+              {partialResult.score != null && (
+                <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+                  <div className="text-right">
+                    <p className="text-[10px] text-muted-foreground">
+                      替代潜力评分
+                    </p>
+                    <p className="text-2xl font-bold text-primary font-mono">
+                      {partialResult.score}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">/ 100</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card className="bg-primary/5 border-primary/20">
+          <CardContent className="p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1 min-w-0 space-y-2">
+                <div className="h-3 w-20 bg-primary/20 rounded animate-pulse" />
+                <div className="h-4 w-48 bg-primary/20 rounded animate-pulse" />
+                <div className="space-y-1.5 mt-2">
+                  <div className="h-2.5 bg-muted-foreground/10 rounded animate-pulse" />
+                  <div className="h-2.5 bg-muted-foreground/10 rounded animate-pulse w-5/6" />
+                  <div className="h-2.5 bg-muted-foreground/10 rounded animate-pulse w-2/3" />
+                </div>
+              </div>
+              <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+                <div className="h-8 w-14 bg-primary/20 rounded animate-pulse" />
+                <div className="h-4 w-16 bg-primary/20 rounded animate-pulse" />
               </div>
             </div>
-            <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-              <div className="h-8 w-14 bg-primary/20 rounded animate-pulse" />
-              <div className="h-4 w-16 bg-primary/20 rounded animate-pulse" />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Section cards */}
       {sectionKeys.map((key, idx) => {
@@ -382,6 +582,7 @@ function StreamingState({
                 config={config}
                 data={partialResult![key] as unknown[]}
                 sectionKey={key}
+                isComplete={completedSections?.has(key) ?? false}
               />
             ) : (
               <SectionSkeleton config={config} />
@@ -392,6 +593,21 @@ function StreamingState({
 
       {/* Scroll sentinel */}
       <div ref={sentinelRef} className="h-px" />
+
+      {/* Jump to latest button */}
+      {userScrolledUp && (
+        <div className="sticky bottom-3 flex justify-center pointer-events-none">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={jumpToLatest}
+            className="pointer-events-auto h-7 text-xs rounded-full border-border/60 bg-card/90 backdrop-blur shadow-md hover:bg-card px-3 gap-1.5"
+          >
+            <ChevronDown className="w-3 h-3" />
+            跳至最新
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -427,10 +643,12 @@ function StreamingSection({
   config,
   data,
   sectionKey,
+  isComplete,
 }: {
   config: SectionConfig;
   data: unknown[];
   sectionKey: string;
+  isComplete: boolean;
 }) {
   const Icon = config.icon;
   const count = data.length;
@@ -451,6 +669,12 @@ function StreamingSection({
             >
               {count} 项
             </Badge>
+            {!isComplete && (
+              <span className="flex items-center gap-1 text-[10px] text-muted-foreground/70">
+                <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                输出中
+              </span>
+            )}
           </div>
           <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
             {config.subtitle}
@@ -1068,6 +1292,73 @@ function RawTextFallback({ rawText, suggestion }: { rawText: string; suggestion?
       </Card>
     </div>
   );
+}
+
+/** Map English schema field names → Chinese for display */
+const TERM_REPLACEMENTS: [RegExp, string][] = [
+  [/\bpainPoints\b/gi, "痛点分析"],
+  [/\bvlmNodes\b/gi, "VLM替代节点"],
+  [/\bmcpIntegration\b/gi, "MCP数据接入"],
+  [/\bhitlDesign\b/gi, "人机协同设计"],
+  [/\bselfCheck\b/gi, "自检"],
+  [/\bproductName\b/gi, "产品名称"],
+  [/\bscore\b/gi, "评分"],
+  [/\bsummary\b/gi, "摘要"],
+  [/\bseverity\b/gi, "严重程度"],
+  [/\breadiness\b/gi, "就绪度"],
+  [/\bassumptions\b/gi, "假设"],
+  [/\blongTailRisk\b/gi, "长尾风险"],
+  [/\bhallucinationRisks\b/gi, "幻觉风险"],
+  [/\bkeyAssumptions\b/gi, "关键假设"],
+  [/\boverallConfidence\b/gi, "整体可信度"],
+  [/\bscoreAlignment\b/gi, "评分一致性"],
+  [/\brelevanceCheck\b/gi, "相关性检查"],
+];
+
+function sanitizeThinkingText(text: string): string {
+  // Remove code fences
+  let cleaned = text
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/`{1,2}[^`\n]+`{1,2}/g, "");
+
+  // Remove inline JSON objects (balanced {…} containing "key": patterns)
+  cleaned = cleaned.replace(/\{[^{}]*"[^"]+":\s*[^{}]*\}/g, "");
+
+  // Replace English schema names with Chinese
+  for (const [pattern, replacement] of TERM_REPLACEMENTS) {
+    cleaned = cleaned.replace(pattern, replacement);
+  }
+
+  const metaPatterns: RegExp[] = [
+    /\bjson\b/i,
+    /\bmarkdown\b/i,
+    /代码块/,
+    /输出格式/,
+    /字段填充/,
+    /(构造|生成|输出|填充|组装)\s*(json|markdown|响应|结果)/i,
+    /(被要求|需要|必须).{0,10}(json|输出|markdown|格式)/i,
+    /^(我们|你|我).{0,5}(需要|必须|应该|被要求|要).{0,10}(输出|生成|json|markdown|格式)/i,
+    /^(最后|开始|准备|现在|接下来).{0,8}(输出|生成|构造|创建)\s*(json|响应)?/i,
+  ];
+
+  return cleaned
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter((p) => {
+      if (!p) return false;
+
+      // Detect JSON-like paragraphs (contain key-value patterns)
+      const lines = p.split("\n");
+      const kvLines = lines.filter((l) => /^\s*"[^"]+":\s*/.test(l));
+      if (kvLines.length > 0 && kvLines.length / lines.length > 0.3) return false;
+      if (/^[{[]/.test(p) && kvLines.length > 1) return false;
+      if (lines.some((l) => l.trim() === "{") && kvLines.length > 0) return false;
+
+      return !metaPatterns.some((pat) => pat.test(p));
+    })
+    .join("\n")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
 }
 
 function RenderMarkdown({ content }: { content: string }) {

@@ -5,7 +5,12 @@ import { toast } from "sonner";
 import { InputPanel } from "@/components/input-panel";
 import { ResultPanel } from "@/components/result-panel";
 import { getCachedResult, setCachedResult } from "@/lib/cache";
-import { detectCompletedSections } from "@/lib/streaming-detector";
+import {
+  detectCompletedSections,
+  extractStringField,
+  extractNumberField,
+  extractPartialArrayItems,
+} from "@/lib/streaming-detector";
 import type {
   GenerationResponse,
   StreamEvent,
@@ -39,11 +44,17 @@ export default function Home() {
     undefined
   );
   const [streamingText, setStreamingText] = useState("");
+  const [thinkingText, setThinkingText] = useState("");
+  const thinkingTextRef = useRef("");
   const [partialResult, setPartialResult] = useState<
     PartialGenerationResponse | undefined
   >(undefined);
   const detectedSectionsRef = useRef<Set<string>>(new Set());
+  const detectedItemIndicesRef = useRef<Map<string, Set<number>>>(new Map());
   const streamingTextRef = useRef("");
+  const [completedSections, setCompletedSections] = useState<Set<string>>(
+    new Set()
+  );
 
   const SHORT_INPUT_THRESHOLD = 100;
 
@@ -64,9 +75,13 @@ export default function Home() {
     setErrorSuggestion(undefined);
     setRetryStatus(null);
     setStreamingText("");
+    setThinkingText("");
+    thinkingTextRef.current = "";
     setPartialResult(undefined);
     detectedSectionsRef.current = new Set();
+    detectedItemIndicesRef.current = new Map();
     streamingTextRef.current = "";
+    setCompletedSections(new Set());
 
     try {
       const res = await fetch("/api/generate", {
@@ -116,30 +131,83 @@ export default function Home() {
             continue;
           }
 
-          if (event.type === "token") {
+          if (event.type === "thinking") {
+            thinkingTextRef.current += event.token;
+            setThinkingText(thinkingTextRef.current);
+          } else if (event.type === "token") {
             streamingTextRef.current += event.token;
             setStreamingText(streamingTextRef.current);
 
-            const newSections = detectCompletedSections(
-              streamingTextRef.current,
-              detectedSectionsRef.current
-            );
-            if (newSections.length > 0) {
-              for (const s of newSections) {
-                detectedSectionsRef.current.add(s.key);
+            const text = streamingTextRef.current;
+
+            // ── Extract data outside state updater (side-effect-free reads) ──
+
+            const summary = extractStringField(text, "summary");
+            const productNameFromStream = extractStringField(text, "productName");
+            const score = extractNumberField(text, "score");
+
+            // Partial array items (mutate refs here, not inside updater)
+            const sectionKeys = ["painPoints", "vlmNodes", "mcpIntegration", "hitlDesign"] as const;
+            const newPartialItems: Record<string, unknown[]> = {};
+            for (const key of sectionKeys) {
+              if (detectedSectionsRef.current.has(key)) continue;
+              let indices = detectedItemIndicesRef.current.get(key);
+              if (!indices) {
+                indices = new Set<number>();
+                detectedItemIndicesRef.current.set(key, indices);
               }
+              const items = extractPartialArrayItems(text, key, indices);
+              if (items.length > 0) {
+                newPartialItems[key] = [];
+                for (const item of items) {
+                  indices.add(item.index);
+                  newPartialItems[key].push(item.data);
+                }
+              }
+            }
+
+            // Full array detection
+            const newSections = detectCompletedSections(text, detectedSectionsRef.current);
+            for (const s of newSections) {
+              detectedSectionsRef.current.add(s.key);
+            }
+            if (newSections.length > 0) {
+              setCompletedSections((prev) => {
+                const next = new Set(prev);
+                for (const s of newSections) next.add(s.key);
+                return next;
+              });
+            }
+
+            // ── Pure state update ──
+            const hasNewData =
+              summary ||
+              productNameFromStream ||
+              score != null ||
+              Object.keys(newPartialItems).length > 0 ||
+              newSections.length > 0;
+
+            if (hasNewData) {
               setPartialResult((prev) => {
                 const next = { ...prev };
-                for (const s of newSections) {
-                  if (s.key === "painPoints")
-                    next.painPoints = s.data as PainPoint[];
-                  else if (s.key === "vlmNodes")
-                    next.vlmNodes = s.data as VlmNode[];
-                  else if (s.key === "mcpIntegration")
-                    next.mcpIntegration = s.data as McpIntegration[];
-                  else if (s.key === "hitlDesign")
-                    next.hitlDesign = s.data as HitlDesign[];
+                if (summary) next.summary = summary;
+                if (productNameFromStream) next.productName = productNameFromStream;
+                if (score != null) next.score = score;
+
+                for (const [key, items] of Object.entries(newPartialItems)) {
+                  const raw = (next as Record<string, unknown>)[key];
+                  const existing: unknown[] = Array.isArray(raw) ? [...raw] : [];
+                  for (const item of items) existing.push(item);
+                  (next as Record<string, unknown>)[key] = existing;
                 }
+
+                for (const s of newSections) {
+                  if (s.key === "painPoints") next.painPoints = s.data as PainPoint[];
+                  else if (s.key === "vlmNodes") next.vlmNodes = s.data as VlmNode[];
+                  else if (s.key === "mcpIntegration") next.mcpIntegration = s.data as McpIntegration[];
+                  else if (s.key === "hitlDesign") next.hitlDesign = s.data as HitlDesign[];
+                }
+
                 return next;
               });
             }
@@ -151,6 +219,7 @@ export default function Home() {
             });
           } else if (event.type === "result") {
             setStreamingText("");
+            setThinkingText("");
             setPartialResult(undefined);
             if (!event.success) {
               setErrorSuggestion(event.suggestion);
@@ -276,6 +345,8 @@ export default function Home() {
             data={resultData}
             rawTextFallback={rawTextFallback}
             streamingText={streamingText}
+            thinkingText={thinkingText}
+            completedSections={completedSections}
             partialResult={partialResult}
             showShortInputWarning={showShortInputWarning}
             retryStatus={retryStatus}
