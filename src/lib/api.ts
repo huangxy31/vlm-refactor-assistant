@@ -20,6 +20,13 @@ export interface DeepSeekCallbacks {
   onRetry?: (attempt: number, maxRetries: number, reason: string) => void;
 }
 
+export interface DeepSeekStreamCallbacks {
+  onToken: (token: string) => void;
+  onDone: (fullText: string, finishReason: "stop" | "length") => void;
+  onError: (error: DeepSeekError) => void;
+  onRetry?: (attempt: number, maxRetries: number, reason: string) => void;
+}
+
 const BASE_URL =
   process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com";
 const MODEL = process.env.DEEPSEEK_MODEL || "deepseek-v4-pro";
@@ -230,4 +237,247 @@ export async function callDeepSeek(
     message: "AI 服务暂时不可用，所有重试均已失败（已自动重试 3 次）",
     retryAttempted: MAX_RETRIES,
   };
+}
+
+async function attemptStreamCall(
+  apiKey: string,
+  systemPrompt: string,
+  userMessage: string,
+  callbacks: DeepSeekStreamCallbacks,
+  timeoutMs: number,
+  signal?: AbortSignal
+): Promise<{ success: true } | DeepSeekError> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  const onAbort = () => controller.abort();
+  signal?.addEventListener("abort", onAbort);
+
+  try {
+    const res = await fetch(`${BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMessage },
+        ],
+        response_format: { type: "json_object" },
+        stream: true,
+        max_tokens: MAX_TOKENS,
+        temperature: 0.3,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!res.ok) {
+      const statusCode = res.status;
+      const errorBody = await res.text().catch(() => "");
+      let error: ApiErrorCode = "API_ERROR";
+      let message: string;
+
+      switch (statusCode) {
+        case 401:
+          error = "AUTH_ERROR";
+          message = "API 密钥无效，请检查 DEEPSEEK_API_KEY 配置";
+          break;
+        case 402:
+          error = "API_ERROR";
+          message = "API 账户余额不足，请充值后重试";
+          break;
+        case 429:
+          error = "RATE_LIMITED";
+          message = "请求过于频繁，请稍后重试";
+          break;
+        default:
+          if (statusCode >= 500) {
+            error = "API_ERROR";
+            message = `AI 服务暂时不可用（${statusCode}），请稍后重试`;
+          } else {
+            error = "API_ERROR";
+            message = `请求参数异常（${statusCode}），请检查输入内容`;
+          }
+      }
+
+      console.error(
+        `[DeepSeek API Stream] ${statusCode} error: ${errorBody.slice(0, 200)}`
+      );
+      return { success: false, statusCode, error, message };
+    }
+
+    const reader = res.body?.getReader();
+    if (!reader) {
+      return {
+        success: false,
+        statusCode: 502,
+        error: "API_ERROR",
+        message: "AI 服务返回了空响应，请重试",
+      };
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let fullText = "";
+    let finishReason: "stop" | "length" = "stop";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split("\n\n");
+      buffer = events.pop() || "";
+
+      for (const event of events) {
+        const lines = event.split("\n");
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const payload = line.slice(6);
+          if (payload === "[DONE]") continue;
+
+          let parsed: Record<string, unknown>;
+          try {
+            parsed = JSON.parse(payload);
+          } catch {
+            continue;
+          }
+
+          const choices = parsed.choices as Array<Record<string, unknown>> | undefined;
+          const choice = choices?.[0];
+          if (!choice) continue;
+
+          const delta = choice.delta as Record<string, unknown> | undefined;
+          if (delta?.content && typeof delta.content === "string") {
+            fullText += delta.content;
+            callbacks.onToken(delta.content);
+          }
+
+          if (choice.finish_reason === "stop") finishReason = "stop";
+          else if (choice.finish_reason === "length") finishReason = "length";
+        }
+      }
+    }
+
+    clearTimeout(timeoutId);
+    signal?.removeEventListener("abort", onAbort);
+
+    if (!fullText) {
+      return {
+        success: false,
+        statusCode: 502,
+        error: "API_ERROR",
+        message: "AI 服务返回了空内容，请重试",
+      };
+    }
+
+    callbacks.onDone(fullText, finishReason);
+    return { success: true };
+  } catch (err) {
+    clearTimeout(timeoutId);
+    signal?.removeEventListener("abort", onAbort);
+
+    if ((err as Error).name === "AbortError") {
+      if (signal?.aborted) {
+        return {
+          success: false,
+          statusCode: 499,
+          error: "API_ERROR",
+          message: "客户端已断开连接",
+        };
+      }
+      return {
+        success: false,
+        statusCode: 504,
+        error: "TIMEOUT",
+        message: "AI 服务响应超时，请稍后重试",
+      };
+    }
+    console.error("[DeepSeek API Stream] Network error:", err);
+    return {
+      success: false,
+      statusCode: 502,
+      error: "API_ERROR",
+      message: "网络请求失败，请检查网络连接后重试",
+    };
+  }
+}
+
+export async function callDeepSeekStream(
+  systemPrompt: string,
+  userMessage: string,
+  callbacks: DeepSeekStreamCallbacks,
+  signal?: AbortSignal
+): Promise<void> {
+  let apiKey: string;
+  try {
+    apiKey = getApiKey();
+  } catch (e) {
+    callbacks.onError({
+      success: false,
+      statusCode: 401,
+      error: "AUTH_ERROR",
+      message: (e as Error).message,
+    });
+    return;
+  }
+
+  let lastError: DeepSeekError | null = null;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const timeout =
+      attempt === 0 ? TIMEOUT_MS : Math.floor(TIMEOUT_MS / 2);
+    const result = await attemptStreamCall(
+      apiKey,
+      systemPrompt,
+      userMessage,
+      callbacks,
+      timeout,
+      signal
+    );
+
+    if (result.success) return;
+
+    lastError = result;
+
+    if (!isRetryableError(result) || attempt === MAX_RETRIES) {
+      callbacks.onError({
+        ...result,
+        retryAttempted: attempt,
+        message:
+          attempt > 0
+            ? `${result.message}（已自动重试 ${attempt} 次）`
+            : result.message,
+      });
+      return;
+    }
+
+    const reason =
+      result.error === "RATE_LIMITED"
+        ? "rate_limited"
+        : result.error === "TIMEOUT"
+          ? "timeout"
+          : "server_error";
+
+    callbacks.onRetry?.(attempt + 1, MAX_RETRIES, reason);
+
+    const delay = Math.min(
+      INITIAL_RETRY_DELAY * Math.pow(2, attempt) + Math.random() * 1000,
+      10000
+    );
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+
+  callbacks.onError({
+    success: false,
+    statusCode: lastError?.statusCode ?? 502,
+    error: lastError?.error ?? "API_ERROR",
+    message: "AI 服务暂时不可用，所有重试均已失败（已自动重试 3 次）",
+    retryAttempted: MAX_RETRIES,
+  });
 }

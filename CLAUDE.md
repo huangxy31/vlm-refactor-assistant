@@ -11,6 +11,13 @@ pnpm start        # Production server
 pnpm lint         # ESLint
 ```
 
+## Code standards
+
+每次 Write/Edit 后，PostToolUse hooks 会自动运行。下一回合会看到检查结果。如果报错，先修再继续。
+
+- 每次写文件后自动运行 `tsc --noEmit`（类型检查）和 `eslint`（仅检查被编辑文件）。报错即为阻断项，禁止带着类型错误或 lint error 继续
+- Hook 输出在下一回合可见 — 不通过就立即修复，不要推进后续任务
+
 ## Feature → File index
 
 ### 主页面 / 两栏布局 / 状态管理

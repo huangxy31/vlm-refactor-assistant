@@ -1,11 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { toast } from "sonner";
 import { InputPanel } from "@/components/input-panel";
 import { ResultPanel } from "@/components/result-panel";
 import { getCachedResult, setCachedResult } from "@/lib/cache";
-import type { GenerationResponse, StreamEvent } from "@/lib/schemas";
+import { detectCompletedSections } from "@/lib/streaming-detector";
+import type {
+  GenerationResponse,
+  StreamEvent,
+  PartialGenerationResponse,
+  PainPoint,
+  VlmNode,
+  McpIntegration,
+  HitlDesign,
+} from "@/lib/schemas";
 
 export interface RetryStatus {
   attempt: number;
@@ -29,6 +38,12 @@ export default function Home() {
   const [errorSuggestion, setErrorSuggestion] = useState<string | undefined>(
     undefined
   );
+  const [streamingText, setStreamingText] = useState("");
+  const [partialResult, setPartialResult] = useState<
+    PartialGenerationResponse | undefined
+  >(undefined);
+  const detectedSectionsRef = useRef<Set<string>>(new Set());
+  const streamingTextRef = useRef("");
 
   const SHORT_INPUT_THRESHOLD = 100;
 
@@ -48,6 +63,10 @@ export default function Home() {
     setIsCachedResult(false);
     setErrorSuggestion(undefined);
     setRetryStatus(null);
+    setStreamingText("");
+    setPartialResult(undefined);
+    detectedSectionsRef.current = new Set();
+    streamingTextRef.current = "";
 
     try {
       const res = await fetch("/api/generate", {
@@ -97,13 +116,42 @@ export default function Home() {
             continue;
           }
 
-          if (event.type === "progress") {
+          if (event.type === "token") {
+            streamingTextRef.current += event.token;
+            setStreamingText(streamingTextRef.current);
+
+            const newSections = detectCompletedSections(
+              streamingTextRef.current,
+              detectedSectionsRef.current
+            );
+            if (newSections.length > 0) {
+              for (const s of newSections) {
+                detectedSectionsRef.current.add(s.key);
+              }
+              setPartialResult((prev) => {
+                const next = { ...prev };
+                for (const s of newSections) {
+                  if (s.key === "painPoints")
+                    next.painPoints = s.data as PainPoint[];
+                  else if (s.key === "vlmNodes")
+                    next.vlmNodes = s.data as VlmNode[];
+                  else if (s.key === "mcpIntegration")
+                    next.mcpIntegration = s.data as McpIntegration[];
+                  else if (s.key === "hitlDesign")
+                    next.hitlDesign = s.data as HitlDesign[];
+                }
+                return next;
+              });
+            }
+          } else if (event.type === "progress") {
             setRetryStatus({
               attempt: event.attempt ?? 0,
               maxRetries: event.maxRetries ?? 0,
               message: event.message,
             });
           } else if (event.type === "result") {
+            setStreamingText("");
+            setPartialResult(undefined);
             if (!event.success) {
               setErrorSuggestion(event.suggestion);
               if (event.rawText) {
@@ -227,6 +275,8 @@ export default function Home() {
             hasResult={hasResult}
             data={resultData}
             rawTextFallback={rawTextFallback}
+            streamingText={streamingText}
+            partialResult={partialResult}
             showShortInputWarning={showShortInputWarning}
             retryStatus={retryStatus}
             isCachedResult={isCachedResult}

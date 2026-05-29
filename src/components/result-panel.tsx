@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,7 +23,14 @@ import {
 } from "lucide-react";
 import type { RetryStatus } from "@/app/page";
 import { generateMarkdownExport } from "@/lib/markdown-export";
-import type { GenerationResponse } from "@/lib/schemas";
+import type {
+  GenerationResponse,
+  PartialGenerationResponse,
+  PainPoint,
+  VlmNode,
+  McpIntegration,
+  HitlDesign,
+} from "@/lib/schemas";
 
 interface ResultPanelProps {
   productName: string;
@@ -30,6 +38,8 @@ interface ResultPanelProps {
   hasResult: boolean;
   data?: GenerationResponse;
   rawTextFallback?: string;
+  streamingText?: string;
+  partialResult?: PartialGenerationResponse;
   showShortInputWarning?: boolean;
   retryStatus?: RetryStatus | null;
   isCachedResult?: boolean;
@@ -93,6 +103,8 @@ export function ResultPanel({
   hasResult,
   data,
   rawTextFallback,
+  streamingText,
+  partialResult,
   showShortInputWarning,
   retryStatus,
   isCachedResult,
@@ -103,6 +115,9 @@ export function ResultPanel({
   const docTitle = productName
     ? `${productName}重构推演白皮书.md`
     : "重构推演白皮书.md";
+
+  const isStreaming = isGenerating && streamingText;
+  const exportDisabled = !hasResult || !data || !!isStreaming;
 
   const handleExport = () => {
     if (!data) return;
@@ -127,7 +142,13 @@ export function ResultPanel({
           <span className="text-sm font-mono text-foreground truncate">
             {docTitle}
           </span>
-          {isGenerating && (
+          {isStreaming && (
+            <span className="flex items-center gap-1 text-[11px] text-primary">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              正在生成白皮书…
+            </span>
+          )}
+          {isGenerating && !isStreaming && (
             <span className="flex items-center gap-1 text-[11px] text-primary animate-pulse">
               <span className="w-1.5 h-1.5 rounded-full bg-primary animate-ping" />
               生成中
@@ -142,7 +163,7 @@ export function ResultPanel({
         <Button
           variant="outline"
           size="sm"
-          disabled={!hasResult || !data}
+          disabled={exportDisabled}
           onClick={handleExport}
           className="flex-shrink-0 h-8 text-xs border-border text-muted-foreground hover:text-foreground hover:border-primary/40 hover:bg-primary/5 disabled:opacity-30 gap-1.5"
         >
@@ -152,19 +173,26 @@ export function ResultPanel({
       </div>
 
       {/* Content Area */}
-      {showShortInputWarning ? (
-        <ShortInputWarning onForceGenerate={onForceGenerate} onDismiss={onDismissWarning} />
-      ) : !hasResult && !isGenerating && !rawTextFallback ? (
-        <EmptyState />
-      ) : isGenerating ? (
-        <LoadingState retryStatus={retryStatus} />
-      ) : data ? (
-        <ResultContent productName={productName} data={data} isCachedResult={isCachedResult} />
-      ) : rawTextFallback ? (
-        <RawTextFallback rawText={rawTextFallback} suggestion={errorSuggestion} />
-      ) : (
-        <EmptyState />
-      )}
+      <div className="flex-1 flex flex-col min-h-[400px] overflow-hidden">
+        {showShortInputWarning ? (
+          <ShortInputWarning onForceGenerate={onForceGenerate} onDismiss={onDismissWarning} />
+        ) : !hasResult && !isGenerating && !rawTextFallback ? (
+          <EmptyState />
+        ) : data ? (
+          <ResultContent productName={productName} data={data} isCachedResult={isCachedResult} />
+        ) : isStreaming ? (
+          <StreamingState
+            partialResult={partialResult}
+            retryStatus={retryStatus}
+          />
+        ) : isGenerating ? (
+          <LoadingState retryStatus={retryStatus} />
+        ) : rawTextFallback ? (
+          <RawTextFallback rawText={rawTextFallback} suggestion={errorSuggestion} />
+        ) : (
+          <EmptyState />
+        )}
+      </div>
     </section>
   );
 }
@@ -260,6 +288,362 @@ function LoadingState({ retryStatus }: { retryStatus?: RetryStatus | null }) {
       ))}
     </div>
   );
+}
+
+function StreamingState({
+  partialResult,
+  retryStatus,
+}: {
+  partialResult?: PartialGenerationResponse;
+  retryStatus?: RetryStatus | null;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const userScrolledUpRef = useRef(false);
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        userScrolledUpRef.current = !entry.isIntersecting;
+      },
+      { threshold: 0.1 }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!userScrolledUpRef.current && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  });
+
+  const sectionKeys = [
+    "painPoints",
+    "vlmNodes",
+    "mcpIntegration",
+    "hitlDesign",
+  ] as const;
+
+  return (
+    <div
+      ref={scrollRef}
+      className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3 min-h-0"
+    >
+      {/* Retry banner */}
+      {retryStatus && retryStatus.attempt > 0 && (
+        <div className="flex items-center gap-2 px-4 py-3 border rounded-lg text-sm bg-amber-400/5 border-amber-400/20 text-amber-400">
+          <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />
+          <span className="flex-1">{retryStatus.message}</span>
+          <span className="text-xs text-muted-foreground flex-shrink-0">
+            {retryStatus.attempt}/{retryStatus.maxRetries}
+          </span>
+        </div>
+      )}
+
+      {/* Summary skeleton */}
+      <Card className="bg-primary/5 border-primary/20">
+        <CardContent className="p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-1 min-w-0 space-y-2">
+              <div className="h-3 w-20 bg-primary/20 rounded animate-pulse" />
+              <div className="h-4 w-48 bg-primary/20 rounded animate-pulse" />
+              <div className="space-y-1.5 mt-2">
+                <div className="h-2.5 bg-muted-foreground/10 rounded animate-pulse" />
+                <div className="h-2.5 bg-muted-foreground/10 rounded animate-pulse w-5/6" />
+                <div className="h-2.5 bg-muted-foreground/10 rounded animate-pulse w-2/3" />
+              </div>
+            </div>
+            <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+              <div className="h-8 w-14 bg-primary/20 rounded animate-pulse" />
+              <div className="h-4 w-16 bg-primary/20 rounded animate-pulse" />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Section cards */}
+      {sectionKeys.map((key, idx) => {
+        const config = SECTION_CONFIGS[idx];
+        const hasData =
+          partialResult &&
+          partialResult[key] &&
+          (partialResult[key] as unknown[]).length > 0;
+
+        return (
+          <div
+            key={key}
+            className="bg-card border border-border rounded-lg overflow-hidden flex-shrink-0"
+          >
+            {hasData ? (
+              <StreamingSection
+                config={config}
+                data={partialResult![key] as unknown[]}
+                sectionKey={key}
+              />
+            ) : (
+              <SectionSkeleton config={config} />
+            )}
+          </div>
+        );
+      })}
+
+      {/* Scroll sentinel */}
+      <div ref={sentinelRef} className="h-px" />
+    </div>
+  );
+}
+
+function SectionSkeleton({ config }: { config: SectionConfig }) {
+  const Icon = config.icon;
+  return (
+    <div className="px-4 py-3.5">
+      <div className="flex items-center gap-3">
+        <div className="flex items-center justify-center w-7 h-7 rounded-md bg-muted">
+          <Icon className={`w-3.5 h-3.5 ${config.accentColor} opacity-40`} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-muted-foreground">
+              {config.title}
+            </span>
+            <div className="h-4 w-16 bg-muted rounded animate-pulse" />
+          </div>
+          <div className="flex items-center gap-2 mt-0.5">
+            <Loader2 className="w-3 h-3 animate-spin text-muted-foreground/50" />
+            <span className="text-[11px] text-muted-foreground/50">
+              正在生成…
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StreamingSection({
+  config,
+  data,
+  sectionKey,
+}: {
+  config: SectionConfig;
+  data: unknown[];
+  sectionKey: string;
+}) {
+  const Icon = config.icon;
+  const count = data.length;
+
+  return (
+    <div>
+      <div className="px-4 py-3.5 flex items-center gap-3 border-b border-border">
+        <div className="flex items-center justify-center w-7 h-7 rounded-md bg-muted flex-shrink-0">
+          <Icon className={`w-3.5 h-3.5 ${config.accentColor}`} />
+        </div>
+        <div className="flex-1 text-left min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-foreground">
+              {config.title}
+            </span>
+            <Badge
+              className={`text-[10px] border px-1.5 py-0 h-4 ${config.badgeColor}`}
+            >
+              {count} 项
+            </Badge>
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+            {config.subtitle}
+          </p>
+        </div>
+      </div>
+      <div className="px-4 pt-2 pb-4 max-h-[40vh] overflow-y-auto">
+        <StreamingSectionItems sectionKey={sectionKey} items={data} />
+      </div>
+    </div>
+  );
+}
+
+function StreamingSectionItems({
+  sectionKey,
+  items,
+}: {
+  sectionKey: string;
+  items: unknown[];
+}) {
+  if (sectionKey === "painPoints") {
+    const pts = items as PainPoint[];
+    return (
+      <div className="flex flex-col gap-3">
+        {pts.map((p, i) => (
+          <div
+            key={i}
+            className="flex gap-3 p-3 bg-amber-400/5 border border-amber-400/10 rounded-md"
+          >
+            <div className="w-5 h-5 flex items-center justify-center rounded-full bg-amber-400/10 text-amber-400 text-[10px] font-bold flex-shrink-0 mt-0.5">
+              {i + 1}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-0.5">
+                <p className="text-sm font-medium text-foreground">{p.title}</p>
+                <SeverityBadge severity={p.severity} />
+              </div>
+              <div className="text-xs text-muted-foreground leading-relaxed space-y-1">
+                <RenderMarkdown content={p.analysis} />
+              </div>
+              {p.longTailRisk && (
+                <div className="mt-2 p-2 bg-amber-400/5 border border-amber-400/10 rounded">
+                  <p className="text-[10px] text-amber-400/70 uppercase tracking-wider mb-0.5">
+                    长尾风险评估
+                  </p>
+                  <div className="text-[11px] text-muted-foreground leading-relaxed">
+                    <RenderMarkdown content={p.longTailRisk} />
+                  </div>
+                </div>
+              )}
+              {p.assumptions && p.assumptions.length > 0 && (
+                <div className="mt-2 p-2 bg-amber-400/5 border border-amber-400/10 rounded">
+                  <p className="text-[10px] text-amber-400/70 uppercase tracking-wider mb-0.5">
+                    假设声明
+                  </p>
+                  <ul className="text-[11px] text-muted-foreground leading-relaxed space-y-0.5 list-none">
+                    {p.assumptions.map((a, ai) => (
+                      <li key={ai} className="flex items-start gap-1.5">
+                        <span className="text-amber-400/50 flex-shrink-0 select-none">-</span>
+                        <span>{a}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (sectionKey === "vlmNodes") {
+    const nodes = items as VlmNode[];
+    return (
+      <div className="flex flex-col gap-2">
+        <div className="grid grid-cols-[1fr_1.5fr_1.5fr_1fr_80px] gap-2 px-1 mb-1">
+          {["替代环节", "传统方案", "VLM+Agent 方案", "预期收益", "就绪度"].map(
+            (h) => (
+              <p
+                key={h}
+                className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider"
+              >
+                {h}
+              </p>
+            )
+          )}
+        </div>
+        {nodes.map((n, i) => (
+          <div
+            key={i}
+            className="grid grid-cols-[1fr_1.5fr_1.5fr_1fr_80px] gap-2 items-start p-3 bg-primary/5 border border-primary/10 rounded-md"
+          >
+            <p className="text-xs font-medium text-foreground">{n.stage}</p>
+            <div className="text-xs text-muted-foreground">
+              <RenderMarkdown content={n.traditional} />
+            </div>
+            <div className="text-xs text-primary">
+              <RenderMarkdown content={n.vlm} />
+            </div>
+            <div className="text-xs text-emerald-400">
+              <RenderMarkdown content={n.gain} />
+            </div>
+            <ReadinessBadge readiness={n.readiness} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (sectionKey === "mcpIntegration") {
+    const mcps = items as McpIntegration[];
+    return (
+      <div className="flex flex-col gap-3">
+        {mcps.map((m, i) => (
+          <div
+            key={i}
+            className="flex gap-3 p-3 bg-emerald-400/5 border border-emerald-400/10 rounded-md"
+          >
+            <div className="w-5 h-5 flex items-center justify-center rounded-full bg-emerald-400/10 text-emerald-400 text-[10px] font-bold flex-shrink-0 mt-0.5">
+              {i + 1}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-foreground mb-0.5">
+                {m.type} — {m.source}
+              </p>
+              <div className="text-xs text-muted-foreground leading-relaxed">
+                <RenderMarkdown content={m.method} />
+              </div>
+              <div className="mt-2 p-2 bg-emerald-400/5 border border-emerald-400/10 rounded">
+                <p className="text-[10px] text-emerald-400/70 uppercase tracking-wider mb-0.5">
+                  接入目的
+                </p>
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  {m.purpose}
+                </p>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (sectionKey === "hitlDesign") {
+    const hitls = items as HitlDesign[];
+    return (
+      <div className="flex flex-col gap-3">
+        {hitls.map((h, i) => (
+          <div
+            key={i}
+            className="flex gap-3 p-3 bg-violet-400/5 border border-violet-400/10 rounded-md"
+          >
+            <div className="w-5 h-5 flex items-center justify-center rounded-full bg-violet-400/10 text-violet-400 text-[10px] font-bold flex-shrink-0 mt-0.5">
+              {i + 1}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-start gap-3 mb-2">
+                <div className="flex-shrink-0">
+                  <p className="text-[10px] text-muted-foreground/60 mb-1 uppercase tracking-wider">
+                    触发条件
+                  </p>
+                  <p className="text-xs font-mono text-violet-400 bg-violet-400/10 px-2 py-1 rounded border border-violet-400/20">
+                    {h.trigger}
+                  </p>
+                </div>
+                <div className="w-px bg-border self-stretch flex-shrink-0" />
+                <div className="flex-1">
+                  <p className="text-[10px] text-muted-foreground/60 mb-1 uppercase tracking-wider">
+                    风险等级
+                  </p>
+                  <p className="text-xs font-medium text-foreground">{h.risk}</p>
+                </div>
+              </div>
+              <div className="text-xs text-muted-foreground leading-relaxed">
+                <RenderMarkdown content={h.strategy} />
+              </div>
+              <div className="mt-2 p-2 bg-violet-400/5 border border-violet-400/10 rounded">
+                <p className="text-[10px] text-violet-400/70 uppercase tracking-wider mb-0.5">
+                  降级方案
+                </p>
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  {h.fallback}
+                </p>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return null;
 }
 
 function CachedResultBanner() {

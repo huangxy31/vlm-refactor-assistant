@@ -92,8 +92,25 @@ export type StreamProgressEvent = {
   message: string;
 };
 
+export type StreamTokenEvent = {
+  type: "token";
+  token: string;
+};
+
 export type StreamResultEvent = {
   type: "result";
 } & (ApiSuccessResponse | ApiErrorResponse);
 
-export type StreamEvent = StreamProgressEvent | StreamResultEvent;
+export type StreamEvent = StreamProgressEvent | StreamTokenEvent | StreamResultEvent;
+
+/** Partial generation result for progressive section reveal during streaming. */
+export type PartialGenerationResponse = {
+  productName?: string;
+  score?: number;
+  summary?: string;
+  painPoints?: PainPoint[];
+  vlmNodes?: VlmNode[];
+  mcpIntegration?: McpIntegration[];
+  hitlDesign?: HitlDesign[];
+  selfCheck?: SelfCheck;
+};

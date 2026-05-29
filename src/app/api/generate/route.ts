@@ -1,6 +1,6 @@
 import { jsonrepair } from "jsonrepair";
 import { buildSystemPrompt, buildUserMessage } from "@/lib/prompt";
-import { callDeepSeek } from "@/lib/api";
+import { callDeepSeek, callDeepSeekStream } from "@/lib/api";
 import { GenerationResponseSchema } from "@/lib/schemas";
 import { MAX_INPUT_LENGTH, MAX_PRODUCT_NAME_LENGTH } from "@/lib/constants";
 import type { ApiErrorCode, StreamEvent } from "@/lib/schemas";
@@ -187,129 +187,99 @@ export async function POST(request: Request) {
         message: "正在调用 AI 服务...",
       });
 
-      let result = await callDeepSeek(systemPrompt, userMessage, {
-        onRetry: (attempt, maxRetries, reason) => {
-          send({
-            type: "progress",
-            stage: "retrying",
-            attempt,
-            maxRetries,
-            message: `AI 服务繁忙，正在重试 (${attempt}/${maxRetries})...`,
-          });
-        },
-      });
+      await callDeepSeekStream(
+        systemPrompt,
+        userMessage,
+        {
+          onToken: (token: string) => {
+            send({ type: "token", token });
+          },
+          onDone: async (fullText: string, finishReason: string) => {
+            if (finishReason === "length") {
+              send({
+                type: "result",
+                success: false,
+                error: "TOKEN_LIMIT" as ApiErrorCode,
+                message:
+                  "输入内容过长导致AI响应被截断，请精简方案描述后重试",
+                suggestion: ERROR_SUGGESTIONS.TOKEN_LIMIT,
+                retryAttempted: 0,
+              });
+              controller.close();
+              return;
+            }
 
-      // Auto-retry with truncated input if token limit hit
-      if (!result.success && result.error === "TOKEN_LIMIT") {
-        send({
-          type: "progress",
-          stage: "generating",
-          message: "内容过长，正在截断后重试...",
-        });
-        const truncated =
-          solutionContent.trim().slice(0, 3000) +
-          "\n\n...[内容过长，已自动截断]...";
-        result = await callDeepSeek(
-          systemPrompt,
-          buildUserMessage(productName.trim(), truncated),
-          {
-            onRetry: (attempt, maxRetries) => {
+            let extracted = await tryExtractAndValidate(fullText);
+
+            if ("error" in extracted) {
+              console.warn(
+                `[API] Streaming parse failed (${extracted.error}), retrying with non-streaming...`
+              );
               send({
                 type: "progress",
                 stage: "retrying",
-                attempt,
-                maxRetries,
-                message: `AI 服务繁忙，正在重试 (${attempt}/${maxRetries})...`,
+                attempt: 1,
+                maxRetries: 1,
+                message: "AI 返回格式异常，正在重新生成...",
               });
-            },
-          }
-        );
-      }
 
-      if (!result.success) {
-        send({
-          type: "result",
-          success: false,
-          error: result.error,
-          message: result.message,
-          suggestion: ERROR_SUGGESTIONS[result.error] || undefined,
-          retryAttempted: result.retryAttempted ?? 0,
-        });
-        controller.close();
-        return;
-      }
+              const retryResult = await callDeepSeek(systemPrompt, userMessage);
 
-      // Handle token limit on successful result with length finish reason
-      if (result.finishReason === "length") {
-        send({
-          type: "result",
-          success: false,
-          error: "TOKEN_LIMIT" as ApiErrorCode,
-          message:
-            "输入内容过长导致AI响应被截断，请精简方案描述后重试",
-          suggestion: ERROR_SUGGESTIONS.TOKEN_LIMIT,
-          retryAttempted: 0,
-        });
-        controller.close();
-        return;
-      }
+              if (retryResult.success && retryResult.finishReason !== "length") {
+                extracted = await tryExtractAndValidate(retryResult.text);
+              }
+            }
 
-      let extracted = await tryExtractAndValidate(result.text);
-      let rawText = result.text;
+            if ("data" in extracted) {
+              send({
+                type: "result",
+                success: true,
+                data: extracted.data!,
+              });
+              controller.close();
+              return;
+            }
 
-      // If first attempt fails, retry once more
-      if ("error" in extracted) {
-        console.warn(
-          `[API] First attempt failed (${extracted.error}), retrying once...`
-        );
-        send({
-          type: "progress",
-          stage: "retrying",
-          attempt: 1,
-          maxRetries: 1,
-          message: "AI 返回格式异常，正在重新生成...",
-        });
+            const errorMessages: Record<string, string> = {
+              JSON_PARSE_ERROR: "AI 返回格式异常，请查看下方原始输出",
+              SCHEMA_VALIDATION: "AI 返回数据结构不完整，请查看下方原始输出",
+            };
 
-        const retryResult = await callDeepSeek(systemPrompt, userMessage);
-
-        if (retryResult.success && retryResult.finishReason !== "length") {
-          extracted = await tryExtractAndValidate(retryResult.text);
-          rawText = retryResult.text;
-        }
-      }
-
-      if ("data" in extracted) {
-        send({
-          type: "result",
-          success: true,
-          data: extracted.data!,
-        });
-        controller.close();
-        return;
-      }
-
-      // All attempts failed — return raw text for user inspection
-      console.error(
-        "[API] All parse attempts failed. Raw response:",
-        rawText.slice(0, 500)
+            send({
+              type: "result",
+              success: false,
+              error: extracted.error,
+              message: errorMessages[extracted.error] || "AI 返回格式异常，请重试",
+              suggestion: ERROR_SUGGESTIONS[extracted.error] || undefined,
+              rawText: fullText,
+              details:
+                "details" in extracted ? extracted.details : undefined,
+            });
+            controller.close();
+          },
+          onError: (error) => {
+            send({
+              type: "result",
+              success: false,
+              error: error.error,
+              message: error.message,
+              suggestion: ERROR_SUGGESTIONS[error.error] || undefined,
+              retryAttempted: error.retryAttempted ?? 0,
+            });
+            controller.close();
+          },
+          onRetry: (attempt, maxRetries) => {
+            send({
+              type: "progress",
+              stage: "retrying",
+              attempt,
+              maxRetries,
+              message: `AI 服务繁忙，正在重试 (${attempt}/${maxRetries})...`,
+            });
+          },
+        },
+        request.signal
       );
-
-      const errorMessages: Record<string, string> = {
-        JSON_PARSE_ERROR: "AI 返回格式异常，请查看下方原始输出",
-        SCHEMA_VALIDATION: "AI 返回数据结构不完整，请查看下方原始输出",
-      };
-
-      send({
-        type: "result",
-        success: false,
-        error: extracted.error,
-        message: errorMessages[extracted.error] || "AI 返回格式异常，请重试",
-        suggestion: ERROR_SUGGESTIONS[extracted.error] || undefined,
-        rawText,
-        details:
-          "details" in extracted ? extracted.details : undefined,
-      });
-      controller.close();
     },
   });
 
