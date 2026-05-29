@@ -45,7 +45,6 @@ export default function Home() {
   );
   const [streamingText, setStreamingText] = useState("");
   const [thinkingText, setThinkingText] = useState("");
-  const thinkingTextRef = useRef("");
   const [partialResult, setPartialResult] = useState<
     PartialGenerationResponse | undefined
   >(undefined);
@@ -76,7 +75,6 @@ export default function Home() {
     setRetryStatus(null);
     setStreamingText("");
     setThinkingText("");
-    thinkingTextRef.current = "";
     setPartialResult(undefined);
     detectedSectionsRef.current = new Set();
     detectedItemIndicesRef.current = new Map();
@@ -131,9 +129,8 @@ export default function Home() {
             continue;
           }
 
-          if (event.type === "thinking") {
-            thinkingTextRef.current += event.token;
-            setThinkingText(thinkingTextRef.current);
+          if (event.type === "thinking_text") {
+            setThinkingText(event.text);
           } else if (event.type === "token") {
             streamingTextRef.current += event.token;
             setStreamingText(streamingTextRef.current);

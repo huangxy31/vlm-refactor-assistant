@@ -5,6 +5,48 @@ import { GenerationResponseSchema } from "@/lib/schemas";
 import { MAX_INPUT_LENGTH, MAX_PRODUCT_NAME_LENGTH } from "@/lib/constants";
 import type { ApiErrorCode, StreamEvent } from "@/lib/schemas";
 
+function filterThinkingText(text: string, isComplete = false): string {
+  const filtered = text
+    // Remove code fences
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/`{1,2}[^`\n]+`{1,2}/g, "")
+    // Remove inline JSON objects
+    .replace(/\{[^{}]*"[^"]+":\s*[^{}]*\}/g, "")
+    // Split into paragraphs
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter((p) => {
+      if (!p) return false;
+      // Must contain Chinese text (natural language)
+      if (!/[一-鿿]/.test(p)) return false;
+      // Reject JSON-like paragraphs
+      const lines = p.split("\n");
+      const kvLines = lines.filter((l) => /^\s*"[^"]+":\s*/.test(l));
+      if (kvLines.length > 0 && kvLines.length / lines.length > 0.3) return false;
+      if (/^[{[]/.test(p) && kvLines.length > 1) return false;
+      // Reject meta/filler lines
+      if (/^\s*(json|markdown|输出格式|字段|代码块|构造|填充)/i.test(p)) return false;
+      return true;
+    })
+    .join("\n")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+
+  // If buffer is still growing, truncate at last paragraph boundary
+  // to avoid displaying partially-formed paragraphs that might be filtered later
+  if (!isComplete && filtered) {
+    const lastNewline = filtered.lastIndexOf("\n");
+    if (lastNewline > 0) {
+      return filtered.slice(0, lastNewline).trim();
+    }
+    // Only one paragraph — don't show until there's at least a second one
+    // (too risky: single paragraph could be a false positive)
+    return "";
+  }
+
+  return filtered;
+}
+
 const ERROR_SUGGESTIONS: Record<string, string> = {
   AUTH_ERROR:
     "请联系管理员检查 DEEPSEEK_API_KEY 环境变量是否正确配置，或重新生成 API Key",
@@ -187,14 +229,36 @@ export async function POST(request: Request) {
         message: "AI 正在深度分析您的方案…",
       });
 
+      let thinkingBuffer = "";
+      let thinkingFlushed = false;
+      let lastFlushTime = Date.now();
+      const THINKING_FLUSH_MS = 3000;
+
       await callDeepSeekStream(
         systemPrompt,
         userMessage,
         {
           onThinking: (token: string) => {
-            send({ type: "thinking", token });
+            thinkingBuffer += token;
+            // Periodic flush: every 3s, send filtered text snapshot
+            const now = Date.now();
+            if (now - lastFlushTime >= THINKING_FLUSH_MS && thinkingBuffer.length > 0) {
+              const filtered = filterThinkingText(thinkingBuffer, false);
+              if (filtered) {
+                send({ type: "thinking_text", text: filtered });
+              }
+              lastFlushTime = now;
+            }
           },
           onToken: (token: string) => {
+            // Final flush of remaining thinking on first content token
+            if (!thinkingFlushed && thinkingBuffer) {
+              thinkingFlushed = true;
+              const filtered = filterThinkingText(thinkingBuffer, true);
+              if (filtered) {
+                send({ type: "thinking_text", text: filtered });
+              }
+            }
             send({ type: "token", token });
           },
           onDone: async (fullText: string, finishReason: string) => {

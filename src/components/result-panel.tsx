@@ -370,57 +370,18 @@ function StreamingState({
   const [userExpandedThinking, setUserExpandedThinking] = useState(false);
   const thinkingExpanded = thinkingText && (!hasContent || userExpandedThinking);
 
-  // Thinking display: buffer → filter → delay 5s → typewriter
-  const thinkingStartRef = useRef(0);
+  // Thinking typewriter reveal (text already filtered server-side)
   const [revealedLen, setRevealedLen] = useState(0);
   const thinkingContentRef = useRef<HTMLDivElement>(null);
   const thinkingSentinelRef = useRef<HTMLDivElement>(null);
   const thinkingUserScrolledUpRef = useRef(false);
 
-  // Track when thinking starts
   useEffect(() => {
-    if (thinkingText && thinkingStartRef.current === 0) {
-      thinkingStartRef.current = Date.now();
-    }
     if (!thinkingText) {
-      thinkingStartRef.current = 0;
       setRevealedLen(0);
+      return;
     }
-  }, [thinkingText]);
-
-  // Filtered + buffered display text
-  const displayThinkingText = thinkingText ? sanitizeThinkingText(thinkingText) : "";
-  const bufferElapsed = thinkingStartRef.current > 0
-    ? Date.now() - thinkingStartRef.current
-    : 0;
-  const canStartReveal = bufferElapsed > 5000 || hasContent;
-
-  // When hasContent flips to true, freeze revealedLen (no more thinking reveal)
-  const frozenRef = useRef(false);
-  useEffect(() => {
-    if (hasContent) frozenRef.current = true;
-  }, [hasContent]);
-
-  // IntersectionObserver for thinking content scroll anchoring
-  useEffect(() => {
-    const sentinel = thinkingSentinelRef.current;
-    if (!sentinel) return;
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        thinkingUserScrolledUpRef.current = !entry.isIntersecting;
-      },
-      { threshold: 0.1, root: thinkingContentRef.current }
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [thinkingExpanded]);
-
-  // Typewriter reveal — only after buffer delay
-  useEffect(() => {
-    if (!displayThinkingText || frozenRef.current) return;
-    if (!canStartReveal) return;
-
-    const target = displayThinkingText.length;
+    const target = thinkingText.length;
     if (revealedLen >= target) return;
 
     const id = setInterval(() => {
@@ -435,7 +396,21 @@ function StreamingState({
     }, 30);
 
     return () => clearInterval(id);
-  }, [displayThinkingText, canStartReveal, revealedLen]);
+  }, [thinkingText]);
+
+  // IntersectionObserver for thinking content scroll anchoring
+  useEffect(() => {
+    const sentinel = thinkingSentinelRef.current;
+    if (!sentinel) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        thinkingUserScrolledUpRef.current = !entry.isIntersecting;
+      },
+      { threshold: 0.1, root: thinkingContentRef.current }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [thinkingExpanded]);
 
   // Auto-scroll thinking content as text reveals — only if user is at bottom
   useEffect(() => {
@@ -502,7 +477,7 @@ function StreamingState({
                 ref={thinkingContentRef}
                 className="mt-2 text-[11px] text-muted-foreground/60 leading-relaxed font-mono max-h-40 overflow-y-auto whitespace-pre-wrap border-t border-border/50 pt-2"
               >
-                {displayThinkingText.slice(0, revealedLen)}
+                {(thinkingText || "").slice(0, revealedLen)}
                 <div ref={thinkingSentinelRef} className="h-px" />
               </div>
             )}
@@ -1295,72 +1270,6 @@ function RawTextFallback({ rawText, suggestion }: { rawText: string; suggestion?
 }
 
 /** Map English schema field names → Chinese for display */
-const TERM_REPLACEMENTS: [RegExp, string][] = [
-  [/\bpainPoints\b/gi, "痛点分析"],
-  [/\bvlmNodes\b/gi, "VLM替代节点"],
-  [/\bmcpIntegration\b/gi, "MCP数据接入"],
-  [/\bhitlDesign\b/gi, "人机协同设计"],
-  [/\bselfCheck\b/gi, "自检"],
-  [/\bproductName\b/gi, "产品名称"],
-  [/\bscore\b/gi, "评分"],
-  [/\bsummary\b/gi, "摘要"],
-  [/\bseverity\b/gi, "严重程度"],
-  [/\breadiness\b/gi, "就绪度"],
-  [/\bassumptions\b/gi, "假设"],
-  [/\blongTailRisk\b/gi, "长尾风险"],
-  [/\bhallucinationRisks\b/gi, "幻觉风险"],
-  [/\bkeyAssumptions\b/gi, "关键假设"],
-  [/\boverallConfidence\b/gi, "整体可信度"],
-  [/\bscoreAlignment\b/gi, "评分一致性"],
-  [/\brelevanceCheck\b/gi, "相关性检查"],
-];
-
-function sanitizeThinkingText(text: string): string {
-  // Remove code fences
-  let cleaned = text
-    .replace(/```[\s\S]*?```/g, "")
-    .replace(/`{1,2}[^`\n]+`{1,2}/g, "");
-
-  // Remove inline JSON objects (balanced {…} containing "key": patterns)
-  cleaned = cleaned.replace(/\{[^{}]*"[^"]+":\s*[^{}]*\}/g, "");
-
-  // Replace English schema names with Chinese
-  for (const [pattern, replacement] of TERM_REPLACEMENTS) {
-    cleaned = cleaned.replace(pattern, replacement);
-  }
-
-  const metaPatterns: RegExp[] = [
-    /\bjson\b/i,
-    /\bmarkdown\b/i,
-    /代码块/,
-    /输出格式/,
-    /字段填充/,
-    /(构造|生成|输出|填充|组装)\s*(json|markdown|响应|结果)/i,
-    /(被要求|需要|必须).{0,10}(json|输出|markdown|格式)/i,
-    /^(我们|你|我).{0,5}(需要|必须|应该|被要求|要).{0,10}(输出|生成|json|markdown|格式)/i,
-    /^(最后|开始|准备|现在|接下来).{0,8}(输出|生成|构造|创建)\s*(json|响应)?/i,
-  ];
-
-  return cleaned
-    .split(/\n{2,}/)
-    .map((p) => p.trim())
-    .filter((p) => {
-      if (!p) return false;
-
-      // Detect JSON-like paragraphs (contain key-value patterns)
-      const lines = p.split("\n");
-      const kvLines = lines.filter((l) => /^\s*"[^"]+":\s*/.test(l));
-      if (kvLines.length > 0 && kvLines.length / lines.length > 0.3) return false;
-      if (/^[{[]/.test(p) && kvLines.length > 1) return false;
-      if (lines.some((l) => l.trim() === "{") && kvLines.length > 0) return false;
-
-      return !metaPatterns.some((pat) => pat.test(p));
-    })
-    .join("\n")
-    .replace(/\n{2,}/g, "\n")
-    .trim();
-}
-
 function RenderMarkdown({ content }: { content: string }) {
   // Lightweight Markdown → plain text rendering for inline display.
   // Splits on double-newline for paragraphs, handles **bold**, *italic*,
