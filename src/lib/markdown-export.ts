@@ -30,27 +30,6 @@ export function generateMarkdownExport(
   lines.push(`> 替代潜力评分：**${data.score} / 100**`);
   lines.push("");
 
-  // SelfCheck
-  const sc = data.selfCheck;
-  lines.push("## 自检报告");
-  lines.push("");
-  lines.push(`- **整体可信度**：${confidenceLabel[sc.overallConfidence]}`);
-  lines.push(`- **评分匹配性**：${sc.scoreAlignment}`);
-  lines.push(`- **相关性检查**：${sc.relevanceCheck}`);
-  lines.push("");
-  lines.push("### 潜在幻觉风险");
-  lines.push("");
-  sc.hallucinationRisks.forEach((r) => {
-    lines.push(`- ${r}`);
-  });
-  lines.push("");
-  lines.push("### 关键假设");
-  lines.push("");
-  sc.keyAssumptions.forEach((a) => {
-    lines.push(`- ${a}`);
-  });
-  lines.push("");
-
   lines.push("## 执行摘要");
   lines.push("");
   lines.push(data.summary);
@@ -124,6 +103,29 @@ export function generateMarkdownExport(
     lines.push(`- **降级方案：** ${h.fallback}`);
     lines.push("");
   });
+
+  // SelfCheck — 附录，放在文末
+  const sc = data.selfCheck;
+  lines.push("---");
+  lines.push("");
+  lines.push("## 自检报告");
+  lines.push("");
+  lines.push(`- **整体可信度**：${confidenceLabel[sc.overallConfidence]}`);
+  lines.push(`- **评分匹配性**：${sc.scoreAlignment}`);
+  lines.push(`- **相关性检查**：${sc.relevanceCheck}`);
+  lines.push("");
+  lines.push("### 潜在幻觉风险");
+  lines.push("");
+  sc.hallucinationRisks.forEach((r) => {
+    lines.push(`- ${r}`);
+  });
+  lines.push("");
+  lines.push("### 关键假设");
+  lines.push("");
+  sc.keyAssumptions.forEach((a) => {
+    lines.push(`- ${a}`);
+  });
+  lines.push("");
 
   lines.push("---");
   lines.push("");
