@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useLayoutEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -124,6 +124,89 @@ export function ResultPanel({
   const isStreaming = isGenerating && (streamingText || thinkingText);
   const exportDisabled = !hasResult || !data || !!isStreaming;
 
+  // ── Thinking state (lifted from StreamingState so toolbar can access it) ──
+  const sectionKeys = [
+    "painPoints",
+    "vlmNodes",
+    "mcpIntegration",
+    "hitlDesign",
+  ] as const;
+  const hasContent = !!(
+    partialResult?.summary ||
+    sectionKeys.some(
+      (k) => (partialResult?.[k] as unknown[] | undefined)?.length
+    )
+  );
+  const [userExpandedThinking, setUserExpandedThinking] = useState(false);
+  const thinkingExpanded =
+    thinkingText && ((!hasContent && !hasResult) || userExpandedThinking);
+
+  // ── Elapsed timer (for connecting phase, shown in toolbar) ──
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!isGenerating || isStreaming) {
+      setElapsed(0);
+      return;
+    }
+    const id = setInterval(() => setElapsed((p) => p + 1), 1000);
+    return () => clearInterval(id);
+  }, [isGenerating, isStreaming]);
+
+  // ── Typewriter reveal
+  const [revealedLen, setRevealedLen] = useState(0);
+  const thinkingContentRef = useRef<HTMLDivElement>(null);
+  const thinkingSentinelRef = useRef<HTMLDivElement>(null);
+  const thinkingUserScrolledUpRef = useRef(false);
+
+  useEffect(() => {
+    if (!thinkingText || !isStreaming) {
+      setRevealedLen(0);
+      return;
+    }
+    const target = thinkingText.length;
+    if (revealedLen >= target) return;
+
+    const id = setInterval(() => {
+      setRevealedLen((prev) => {
+        const next = prev + 3;
+        if (next >= target) {
+          clearInterval(id);
+          return target;
+        }
+        return next;
+      });
+    }, 30);
+
+    return () => clearInterval(id);
+  }, [thinkingText, isStreaming]);
+
+  // IntersectionObserver for thinking content scroll anchoring
+  useEffect(() => {
+    const sentinel = thinkingSentinelRef.current;
+    if (!sentinel || !isStreaming) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        thinkingUserScrolledUpRef.current = !entry.isIntersecting;
+      },
+      { threshold: 0.1, root: thinkingContentRef.current }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [thinkingExpanded, isStreaming]);
+
+  // Auto-scroll thinking content as text reveals
+  useLayoutEffect(() => {
+    const container = thinkingContentRef.current;
+    if (
+      container &&
+      thinkingExpanded &&
+      !thinkingUserScrolledUpRef.current &&
+      isStreaming
+    ) {
+      container.scrollTop = container.scrollHeight;
+    }
+  }, [revealedLen, thinkingExpanded, isStreaming]);
+
   const handleExport = () => {
     if (!data) return;
     const mdContent = generateMarkdownExport(data, productName);
@@ -141,40 +224,110 @@ export function ResultPanel({
   return (
     <section className="flex flex-col h-full gap-4">
       {/* Toolbar */}
-      <div className="flex items-center justify-between gap-3 px-4 py-3 bg-card border border-border rounded-lg flex-shrink-0">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <FileText className="w-4 h-4 text-primary flex-shrink-0" />
-          <span className="text-sm font-mono text-foreground truncate">
-            {docTitle}
-          </span>
-          {isStreaming && (
-            <span className="flex items-center gap-1 text-[11px] text-primary">
-              <Loader2 className="w-3 h-3 animate-spin" />
-              正在生成白皮书…
+      <div className="flex flex-col bg-card border border-border rounded-lg flex-shrink-0 overflow-hidden">
+        <div className="flex items-center justify-between gap-3 px-4 py-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <FileText className="w-4 h-4 text-primary flex-shrink-0" />
+            <span className="text-sm font-mono text-foreground truncate">
+              {docTitle}
             </span>
-          )}
-          {isGenerating && !isStreaming && (
-            <span className="flex items-center gap-1 text-[11px] text-primary animate-pulse">
-              <Loader2 className="w-3 h-3 animate-spin" />
-              正在连接 AI 服务…
-            </span>
-          )}
-          {hasResult && !isGenerating && (
-            <Badge className="text-[10px] bg-emerald-400/10 text-emerald-400 border border-emerald-400/20 px-1.5 py-0 h-4">
-              已完成
-            </Badge>
-          )}
+            {isStreaming && (
+              <span className="flex items-center gap-1 text-[11px] text-primary">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                正在生成白皮书…
+              </span>
+            )}
+            {isGenerating && !isStreaming && (
+              <span className="flex items-center gap-1 text-[11px] text-primary animate-pulse">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                正在连接 AI 服务…
+              </span>
+            )}
+            {hasResult && !isGenerating && (
+              <Badge className="text-[10px] bg-emerald-400/10 text-emerald-400 border border-emerald-400/20 px-1.5 py-0 h-4">
+                已完成
+              </Badge>
+            )}
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={exportDisabled}
+            onClick={handleExport}
+            className="flex-shrink-0 h-8 text-xs border-border text-muted-foreground hover:text-foreground hover:border-primary/40 hover:bg-primary/5 disabled:opacity-30 gap-1.5"
+          >
+            <FileDown className="w-3.5 h-3.5" />
+            导出为 .md 文件
+          </Button>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={exportDisabled}
-          onClick={handleExport}
-          className="flex-shrink-0 h-8 text-xs border-border text-muted-foreground hover:text-foreground hover:border-primary/40 hover:bg-primary/5 disabled:opacity-30 gap-1.5"
-        >
-          <FileDown className="w-3.5 h-3.5" />
-          导出为 .md 文件
-        </Button>
+
+        {/* Loading status — shown during connecting phase, hidden when thinking starts */}
+        {isGenerating && !isStreaming && (
+          <div className="border-t border-border/50 px-4 py-3 flex items-center gap-3">
+            <div className="flex items-center justify-center w-7 h-7 rounded-full bg-primary/10 flex-shrink-0">
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-foreground">
+                AI 正在深度分析您的方案…
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                复杂推演预计需要 20-30 秒 · 已等待 {elapsed}s
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Thinking content — inside toolbar, below filename */}
+        {thinkingText && (
+          <div className="border-t border-border/50">
+            <button
+              type="button"
+              onClick={() => setUserExpandedThinking(!userExpandedThinking)}
+              className="flex items-center gap-2 w-full text-left px-4 py-2 hover:bg-muted/30 transition-colors"
+            >
+              <BrainCircuit
+                className={`w-4 h-4 flex-shrink-0 ${
+                  !hasContent && !hasResult
+                    ? "text-indigo-400"
+                    : "text-muted-foreground/50"
+                }`}
+              />
+              <span
+                className={`text-xs font-medium flex-1 ${
+                  !hasContent && !hasResult
+                    ? "text-indigo-400"
+                    : "text-muted-foreground/60"
+                }`}
+              >
+                {!hasContent && !hasResult
+                  ? "AI 正在分析您的方案…"
+                  : hasResult && !isGenerating
+                    ? "AI 分析过程"
+                    : "AI 分析完成，白皮书生成中…"}
+              </span>
+              {isStreaming && !hasContent && (
+                <Loader2 className="w-3 h-3 animate-spin text-indigo-400/60 flex-shrink-0" />
+              )}
+              <ChevronRight
+                className={`w-3.5 h-3.5 text-muted-foreground/50 flex-shrink-0 transition-transform ${
+                  thinkingExpanded ? "rotate-90" : ""
+                }`}
+              />
+            </button>
+            {thinkingExpanded && (
+              <div
+                ref={thinkingContentRef}
+                className="px-4 pb-3 text-[11px] text-muted-foreground/60 leading-relaxed font-mono max-h-40 overflow-y-auto whitespace-pre-wrap"
+              >
+                {isStreaming
+                  ? (thinkingText || "").slice(0, revealedLen)
+                  : thinkingText}
+                <div ref={thinkingSentinelRef} className="h-px" />
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Content Area */}
@@ -188,12 +341,29 @@ export function ResultPanel({
         ) : isStreaming ? (
           <StreamingState
             partialResult={partialResult}
-            thinkingText={thinkingText}
             completedSections={completedSections}
             retryStatus={retryStatus}
           />
         ) : isGenerating ? (
-          <LoadingState retryStatus={retryStatus} />
+          <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3 min-h-0">
+            {retryStatus && retryStatus.attempt > 0 && (
+              <div className="flex items-center gap-2 px-4 py-3 border rounded-lg text-sm bg-amber-400/5 border-amber-400/20 text-amber-400">
+                <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />
+                <span className="flex-1">{retryStatus.message}</span>
+                <span className="text-xs text-muted-foreground flex-shrink-0">
+                  {retryStatus.attempt}/{retryStatus.maxRetries}
+                </span>
+              </div>
+            )}
+            {SECTION_CONFIGS.map((config) => (
+              <div
+                key={config.id}
+                className="bg-card border border-border rounded-lg overflow-hidden flex-shrink-0"
+              >
+                <SectionSkeleton config={config} />
+              </div>
+            ))}
+          </div>
         ) : rawTextFallback ? (
           <RawTextFallback rawText={rawTextFallback} suggestion={errorSuggestion} />
         ) : (
@@ -263,63 +433,12 @@ function EmptyState() {
   );
 }
 
-function LoadingState({ retryStatus }: { retryStatus?: RetryStatus | null }) {
-  const showProgress = retryStatus && retryStatus.message;
-  const isRetrying = showProgress && retryStatus!.attempt > 0;
-  const [elapsed, setElapsed] = useState(0);
-
-  useEffect(() => {
-    const id = setInterval(() => setElapsed((p) => p + 1), 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  return (
-    <div className="flex-1 flex flex-col gap-3 min-h-[400px]">
-      {/* Progress / status banner */}
-      {(showProgress || !isRetrying) && (
-        <div
-          className={`flex items-center gap-3 px-4 py-4 border rounded-lg ${
-            isRetrying
-              ? "bg-amber-400/5 border-amber-400/20 text-amber-400 animate-pulse"
-              : "bg-primary/5 border-primary/20"
-          }`}
-        >
-          <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 flex-shrink-0">
-            <Loader2 className="w-5 h-5 animate-spin text-primary" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-foreground">
-              {isRetrying
-                ? retryStatus!.message
-                : "AI 正在深度分析您的方案…"}
-            </p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {isRetrying
-                ? `${retryStatus!.attempt}/${retryStatus!.maxRetries}`
-                : `复杂推演预计需要 20-30 秒 · 已等待 ${elapsed}s`}
-            </p>
-          </div>
-        </div>
-      )}
-      {[...Array(4)].map((_, i) => (
-        <div
-          key={i}
-          className="h-16 rounded-lg bg-muted/30 animate-pulse border border-border"
-          style={{ animationDelay: `${i * 150}ms` }}
-        />
-      ))}
-    </div>
-  );
-}
-
 function StreamingState({
   partialResult,
-  thinkingText,
   completedSections,
   retryStatus,
 }: {
   partialResult?: PartialGenerationResponse;
-  thinkingText?: string;
   completedSections?: Set<string>;
   retryStatus?: RetryStatus | null;
 }) {
@@ -342,9 +461,9 @@ function StreamingState({
     return () => observer.disconnect();
   }, []);
 
-  useEffect(() => {
-    if (!userScrolledUpRef.current && sentinelRef.current) {
-      sentinelRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+  useLayoutEffect(() => {
+    if (!userScrolledUpRef.current && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   });
 
@@ -361,65 +480,6 @@ function StreamingState({
     "hitlDesign",
   ] as const;
 
-  const hasContent = !!(
-    partialResult?.summary ||
-    sectionKeys.some(
-      (k) => (partialResult?.[k] as unknown[] | undefined)?.length
-    )
-  );
-  const [userExpandedThinking, setUserExpandedThinking] = useState(false);
-  const thinkingExpanded = thinkingText && (!hasContent || userExpandedThinking);
-
-  // Thinking typewriter reveal (text already filtered server-side)
-  const [revealedLen, setRevealedLen] = useState(0);
-  const thinkingContentRef = useRef<HTMLDivElement>(null);
-  const thinkingSentinelRef = useRef<HTMLDivElement>(null);
-  const thinkingUserScrolledUpRef = useRef(false);
-
-  useEffect(() => {
-    if (!thinkingText) {
-      setRevealedLen(0);
-      return;
-    }
-    const target = thinkingText.length;
-    if (revealedLen >= target) return;
-
-    const id = setInterval(() => {
-      setRevealedLen((prev) => {
-        const next = prev + 3;
-        if (next >= target) {
-          clearInterval(id);
-          return target;
-        }
-        return next;
-      });
-    }, 30);
-
-    return () => clearInterval(id);
-  }, [thinkingText]);
-
-  // IntersectionObserver for thinking content scroll anchoring
-  useEffect(() => {
-    const sentinel = thinkingSentinelRef.current;
-    if (!sentinel) return;
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        thinkingUserScrolledUpRef.current = !entry.isIntersecting;
-      },
-      { threshold: 0.1, root: thinkingContentRef.current }
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [thinkingExpanded]);
-
-  // Auto-scroll thinking content as text reveals — only if user is at bottom
-  useEffect(() => {
-    const sentinel = thinkingSentinelRef.current;
-    if (sentinel && thinkingExpanded && !thinkingUserScrolledUpRef.current) {
-      sentinel.scrollIntoView({ behavior: "smooth", block: "end" });
-    }
-  }, [revealedLen, thinkingExpanded]);
-
   return (
     <div
       ref={scrollRef}
@@ -434,55 +494,6 @@ function StreamingState({
             {retryStatus.attempt}/{retryStatus.maxRetries}
           </span>
         </div>
-      )}
-
-      {/* Thinking card — shows reasoning_content until real output arrives */}
-      {thinkingText && (
-        <Card
-          className={`border transition-colors duration-500 ${
-            hasContent
-              ? "bg-muted/20 border-border/50"
-              : "bg-indigo-400/5 border-indigo-400/20"
-          }`}
-        >
-          <CardContent className="p-3">
-            <button
-              type="button"
-              onClick={() => setUserExpandedThinking(!userExpandedThinking)}
-              className="flex items-center gap-2 w-full text-left"
-            >
-              <BrainCircuit
-                className={`w-4 h-4 flex-shrink-0 ${
-                  hasContent ? "text-muted-foreground/50" : "text-indigo-400"
-                }`}
-              />
-              <span
-                className={`text-xs font-medium flex-1 ${
-                  hasContent ? "text-muted-foreground/60" : "text-indigo-400"
-                }`}
-              >
-                {hasContent ? "AI 分析完成，白皮书生成中…" : "AI 正在分析您的方案…"}
-              </span>
-              {!hasContent && (
-                <Loader2 className="w-3 h-3 animate-spin text-indigo-400/60 flex-shrink-0" />
-              )}
-              <ChevronRight
-                className={`w-3.5 h-3.5 text-muted-foreground/50 flex-shrink-0 transition-transform ${
-                  thinkingExpanded ? "rotate-90" : ""
-                }`}
-              />
-            </button>
-            {thinkingExpanded && (
-              <div
-                ref={thinkingContentRef}
-                className="mt-2 text-[11px] text-muted-foreground/60 leading-relaxed font-mono max-h-40 overflow-y-auto whitespace-pre-wrap border-t border-border/50 pt-2"
-              >
-                {(thinkingText || "").slice(0, revealedLen)}
-                <div ref={thinkingSentinelRef} className="h-px" />
-              </div>
-            )}
-          </CardContent>
-        </Card>
       )}
 
       {/* Summary — skeleton or real content */}
@@ -520,19 +531,23 @@ function StreamingState({
       ) : (
         <Card className="bg-primary/5 border-primary/20">
           <CardContent className="p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex-1 min-w-0 space-y-2">
-                <div className="h-3 w-20 bg-primary/20 rounded animate-pulse" />
-                <div className="h-4 w-48 bg-primary/20 rounded animate-pulse" />
-                <div className="space-y-1.5 mt-2">
-                  <div className="h-2.5 bg-muted-foreground/10 rounded animate-pulse" />
-                  <div className="h-2.5 bg-muted-foreground/10 rounded animate-pulse w-5/6" />
-                  <div className="h-2.5 bg-muted-foreground/10 rounded animate-pulse w-2/3" />
-                </div>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 flex-shrink-0">
+                <FileText className="w-3.5 h-3.5 text-primary opacity-40" />
               </div>
-              <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-                <div className="h-8 w-14 bg-primary/20 rounded animate-pulse" />
-                <div className="h-4 w-16 bg-primary/20 rounded animate-pulse" />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-muted-foreground">
+                    执行摘要
+                  </span>
+                  <div className="h-4 w-16 bg-muted rounded animate-pulse" />
+                </div>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <Loader2 className="w-3 h-3 animate-spin text-muted-foreground/50" />
+                  <span className="text-[11px] text-muted-foreground/50">
+                    正在生成…
+                  </span>
+                </div>
               </div>
             </div>
           </CardContent>

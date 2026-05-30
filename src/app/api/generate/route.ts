@@ -5,42 +5,81 @@ import { GenerationResponseSchema } from "@/lib/schemas";
 import { MAX_INPUT_LENGTH, MAX_PRODUCT_NAME_LENGTH } from "@/lib/constants";
 import type { ApiErrorCode, StreamEvent } from "@/lib/schemas";
 
-function filterThinkingText(text: string, isComplete = false): string {
-  const filtered = text
-    // Remove code fences
-    .replace(/```[\s\S]*?```/g, "")
-    .replace(/`{1,2}[^`\n]+`{1,2}/g, "")
-    // Remove inline JSON objects
-    .replace(/\{[^{}]*"[^"]+":\s*[^{}]*\}/g, "")
-    // Split into paragraphs
-    .split(/\n{2,}/)
-    .map((p) => p.trim())
-    .filter((p) => {
-      if (!p) return false;
-      // Must contain Chinese text (natural language)
-      if (!/[一-鿿]/.test(p)) return false;
-      // Reject JSON-like paragraphs
-      const lines = p.split("\n");
-      const kvLines = lines.filter((l) => /^\s*"[^"]+":\s*/.test(l));
-      if (kvLines.length > 0 && kvLines.length / lines.length > 0.3) return false;
-      if (/^[{[]/.test(p) && kvLines.length > 1) return false;
-      // Reject meta/filler lines
-      if (/^\s*(json|markdown|输出格式|字段|代码块|构造|填充)/i.test(p)) return false;
-      return true;
-    })
-    .join("\n")
-    .replace(/\n{2,}/g, "\n")
-    .trim();
+const FIELD_REPLACEMENTS: [RegExp, string][] = [
+  // Long camelCase field names first (avoid partial match on shorter variants)
+  [/\boverallConfidence\b/gi, "整体置信度"],
+  [/\bhallucinationRisks\b/gi, "幻觉风险"],
+  [/\bkeyAssumptions\b/gi, "关键假设"],
+  [/\bscoreAlignment\b/gi, "评分对齐"],
+  [/\brelevanceCheck\b/gi, "相关性检查"],
+  [/\bmcpIntegration\b/gi, "MCP集成"],
+  [/\bhitlDesign\b/gi, "HITL设计"],
+  [/\blongTailRisk\b/gi, "长尾风险"],
+  [/\bpainPoints\b/gi, "痛点"],
+  [/\bvlmNodes\b/gi, "VLM节点"],
+  [/\bselfCheck\b/gi, "自检"],
+  [/\bproductName\b/gi, "产品名称"],
+  // Lowercase variants
+  [/\boverallconfidence\b/gi, "整体置信度"],
+  [/\bhallucinationrisks\b/gi, "幻觉风险"],
+  [/\bkeyassumptions\b/gi, "关键假设"],
+  [/\bscorealignment\b/gi, "评分对齐"],
+  [/\brelevancecheck\b/gi, "相关性检查"],
+  [/\bmcpintegration\b/gi, "MCP集成"],
+  [/\bhitldesign\b/gi, "HITL设计"],
+  [/\blongtailrisk\b/gi, "长尾风险"],
+  [/\bpainpoint\b/gi, "痛点"],
+  [/\bvlmnode\b/gi, "VLM节点"],
+  [/\bselfcheck\b/gi, "自检"],
+  [/\bproductname\b/gi, "产品名称"],
+  // Single-word sub-fields
+  [/\bassumptions\b/gi, "假设"],
+  [/\breadiness\b/gi, "就绪度"],
+  [/\btraditional\b/gi, "传统方案"],
+  [/\bseverity\b/gi, "严重度"],
+  [/\banalysis\b/gi, "分析"],
+  [/\bsummary\b/gi, "摘要"],
+  [/\btrigger\b/gi, "触发条件"],
+  [/\bstrategy\b/gi, "兜底策略"],
+  [/\bfallback\b/gi, "降级方案"],
+  [/\bpurpose\b/gi, "接入目的"],
+  [/\bmethod\b/gi, "接入方法"],
+  [/\bsource\b/gi, "数据来源"],
+  [/\bstage\b/gi, "环节"],
+  [/\btitle\b/gi, "标题"],
+  [/\bscore\b/gi, "评分"],
+  [/\btype\b/gi, "数据类型"],
+  [/\bgain\b/gi, "预期收益"],
+  [/\brisk\b/gi, "风险"],
+  [/\bvlm\b/gi, "VLM方案"],
+];
 
-  // If buffer is still growing, truncate at last paragraph boundary
-  // to avoid displaying partially-formed paragraphs that might be filtered later
+function filterThinkingText(text: string, isComplete = false): string {
+  // 1. Remove code fences (no value to users)
+  let filtered = text
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/`{1,2}[^`\n]+`{1,2}/g, "");
+
+  // 2. Replace JSON schema field names with Chinese equivalents
+  for (const [pattern, replacement] of FIELD_REPLACEMENTS) {
+    filtered = filtered.replace(pattern, replacement);
+  }
+
+  // 3. Replace technical terms (compound patterns first to avoid duplication like "解析数据数据")
+  filtered = filtered.replace(/json数据/gi, "解析数据");
+  filtered = filtered.replace(/json/gi, "解析数据");
+  filtered = filtered.replace(/markdown数据/gi, "文本数据");
+  filtered = filtered.replace(/markdown/gi, "文本数据");
+
+  filtered = filtered.trim();
+
+  // 4. Incremental mode: truncate at last paragraph boundary to avoid
+  //    displaying partially-formed paragraphs that might change later
   if (!isComplete && filtered) {
     const lastNewline = filtered.lastIndexOf("\n");
     if (lastNewline > 0) {
       return filtered.slice(0, lastNewline).trim();
     }
-    // Only one paragraph — don't show until there's at least a second one
-    // (too risky: single paragraph could be a false positive)
     return "";
   }
 

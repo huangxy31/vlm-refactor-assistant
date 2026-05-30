@@ -216,7 +216,6 @@ export default function Home() {
             });
           } else if (event.type === "result") {
             setStreamingText("");
-            setThinkingText("");
             setPartialResult(undefined);
             if (!event.success) {
               setErrorSuggestion(event.suggestion);
