@@ -16,7 +16,10 @@
 - **VLM 替代节点设计** — 逐环节对比传统方案与 VLM + Agent 方案的差异和预期收益
 - **MCP 数据接入规划** — 设计多模态数据（结构化/非结构化/实时流）接入 Agent 工作流的方案
 - **人机协同兜底策略** — 针对大模型非确定性输出设计置信度阈值、降级路径和人工介入机制
-- **白皮书导出** — 一键导出完整 Markdown 格式白皮书
+- **Thinking 过程可视化** — 实时展示 DeepSeek 推理链，字段名自动中文化，帮助理解模型分析逻辑
+- **流式渐进式展开** — SSE 流式推送，4 个 section 边生成边校验边展示，检测到完整 JSON 结构即展开
+- **流中断恢复** — 中断时保留已输出的部分内容，支持从中断点恢复或丢弃重新生成
+- **白皮书导出** — 一键导出完整 Markdown 格式白皮书（自检报告移至文末附录）
 
 ## 技术架构
 
@@ -26,7 +29,7 @@
 |---|---|---|
 | **v0** | UI 原型设计 | 通过自然语言描述快速生成 Next.js + shadcn/ui 页面布局与组件结构，完成双栏编辑器、手风琴结果面板、Tab 切换等交互骨架 |
 | **Claude Code** | 全栈开发与架构设计 | 在 v0 脚手架基础上迭代业务逻辑：System Prompt 工程、DeepSeek API 接入与三级递进错误处理、流式 NDJSON 响应、Zod 校验管道、localStorage 缓存降级、Markdown 导出等关键链路 |
-| **DeepSeek API** | AI 推理引擎 | 基于 `deepseek-v4-pro` 模型，启用 JSON Mode（`response_format: { type: 'json_object' }`）确保结构化输出，temperature 0.3 控制确定性 |
+| **DeepSeek API** | AI 推理引擎 | 基于 `deepseek-v4-pro` 模型，启用流式 JSON Mode（`response_format: { type: 'json_object' }` + `stream: true`），SSE 逐 token 推送，temperature 0.3 控制确定性 |
 
 三者形成"设计 → 开发 → 推理"的协作链：v0 产出 UI 骨架，Claude Code 注入业务逻辑与工程韧性，DeepSeek API 驱动核心分析能力。
 
@@ -58,8 +61,11 @@ project-root/
 │   ├── lib/
 │   │   ├── schemas.ts               # Zod 校验 schema + TypeScript 类型
 │   │   ├── prompt.ts                # 专家 System Prompt 构建
-│   │   ├── api.ts                   # DeepSeek HTTP 客户端
+│   │   ├── api.ts                   # DeepSeek HTTP/SSE 客户端（流式 + 非流式）
+│   │   ├── streaming-detector.ts    # 流式 JSON 渐进检测（section/item 完成判定）
 │   │   ├── markdown-export.ts       # .md 导出拼接
+│   │   ├── cache.ts                 # localStorage 缓存（24h TTL, LRU）
+│   │   ├── constants.ts             # 输入长度上限等常量
 │   │   └── utils.ts                 # cn() 工具函数
 │   └── hooks/                       # use-mobile, use-toast
 ├── public/                          # 静态资源
@@ -111,33 +117,44 @@ pnpm dev
 ## 使用说明
 
 1. **输入方案** — 在左侧面板输入产品名称，通过直接输入或上传 `.md` 文件提供传统视觉方案详情
-2. **生成推演** — 点击「生成推演白皮书」，等待 AI 分析（约 15-60 秒）
-3. **查看结果** — 右侧面板展示 4 个折叠区域：痛点分析、VLM 替代节点、MCP 数据接入、人机协同设计
-4. **导出白皮书** — 点击顶部「导出为 .md 文件」下载完整报告
+2. **生成推演** — 点击「生成推演白皮书」，AI 流式分析（约 15-60 秒），工具栏实时展示 thinking 推理过程
+3. **渐进式查看** — 4 个 section（痛点分析、VLM 替代节点、MCP 数据接入、人机协同设计）边生成边展开，无需等待全部完成
+4. **中断与恢复** — 生成过程中可随时点击停止，已输出的内容会保留；支持从中断点恢复或丢弃重新生成
+5. **导出白皮书** — 点击顶部「导出为 .md 文件」下载完整报告（自检报告在文末附录）
 
 ## 架构说明
 
 ```
-浏览器                                    Next.js 服务端                     DeepSeek API
-───────                                  ─────────────                     ───────────
+浏览器                                          Next.js 服务端                          DeepSeek API
+───────                                        ─────────────                          ───────────
 InputPanel ──→ page.tsx ──fetch──→ /api/generate/route.ts ──→ POST /chat/completions
-                                        │                                  │
-                                        ├── prompt.ts (System Prompt)      │
-                                        ├── api.ts   (HTTP client)  ───────┘
-                                        ├── JSON 解析 + 容错修复
-                                        └── Zod 校验
-                page.tsx ←──── { success, data } ←────────────────────────┘
-                   │
+                                              │                                       │
+                                              ├── prompt.ts (System Prompt)           │
+                                              ├── api.ts (SSE streaming) ─────────────┘
+                                              ├── thinking 过滤 + 字段中文化           │
+                                              ├── NDJSON 流推送 (progress/token/       │
+                                              │   thinking_text/result 事件)           │
+                                              └── 流结束后 JSON 解析 + Zod 校验
+      page.tsx ←── NDJSON stream ─────────────┘
+         │
+         ├── setStreamingText / setThinkingText / setPartialResult
+         ├── streaming-detector.ts: 检测 section/item 完成
+         │
 ResultPanel ←──────┘
-  ├── 4 个 Accordion 动态渲染
+  ├── 4 个 Accordion（流式渐进展开，完成即显示）
+  ├── 工具栏：导出 .md / 停止生成 / 重新生成
   └── handleExport → Blob download
 ```
 
 关键设计决策：
 
-- **JSON Mode** — 使用 DeepSeek OpenAI 兼容端点（`/chat/completions`），启用 `response_format: { type: 'json_object' }`，确保结构化输出
-- **JSON 容错** — 三步解析策略：直接解析 → Markdown 代码块提取 → 首尾花括号截取 + jsonrepair 修复
-- **Token 截断处理** — 检测 `finish_reason === 'length'` 时自动截断输入重试一次
+- **流式 JSON Mode** — 使用 DeepSeek OpenAI 兼容端点，同时启用 `response_format: { type: 'json_object' }` 和 `stream: true`，兼顾结构化输出与逐 token 实时推送。流结束时对完整文本进行 JSON 解析 + Zod 校验，解析失败则回退到非流式调用重试一次
+- **渐进式 Section 展开** — 客户端在接收流式 token 的同时，用 `streaming-detector.ts` 检测 JSON 中 section 数组（painPoints/vlmNodes 等）的每个 item 是否已形成完整 JSON 对象，检测到即立即展开显示，无需等待全部生成完毕
+- **Thinking 内容流式展示** — DeepSeek 的 `reasoning_content` 字段通过 SSE 流推送到客户端，服务端每 3 秒批量推送过滤后的 thinking 文本（去除代码块、英文字段名中文化），在工具栏中实时展示
+- **JSON 容错** — 四步解析策略：直接解析 → Markdown 代码块提取 → 首尾花括号截取 → jsonrepair 修复
+- **Token 截断处理** — 检测 `finish_reason === 'length'` 时返回错误提示，引导用户精简输入
+- **流中断保留部分输出** — 用户点击停止或连接断开时，已接收的部分 JSON token 保留在页面上，可从中断状态恢复或丢弃重新生成
+- **服务端字段中文化** — 流式推送的 thinking 文本和最终 JSON 输出中的 camelCase 英文字段名在服务端替换为中文，减轻客户端处理负担
 - **API Key 安全** — Key 仅存在服务端环境变量，浏览器无法访问
 
 ## Context Engineering 设计决策
