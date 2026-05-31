@@ -21,6 +21,7 @@ import {
   ChevronDown,
   OctagonAlert,
   Loader2,
+  Square,
 } from "lucide-react";
 import type { RetryStatus } from "@/app/page";
 import { generateMarkdownExport } from "@/lib/markdown-export";
@@ -50,6 +51,7 @@ interface ResultPanelProps {
   streamInterrupted?: boolean;
   onForceGenerate?: () => void;
   onDismissWarning?: () => void;
+  onCancel?: () => void;
 }
 
 type SectionConfig = {
@@ -118,6 +120,7 @@ export function ResultPanel({
   streamInterrupted,
   onForceGenerate,
   onDismissWarning,
+  onCancel,
 }: ResultPanelProps) {
   const docTitle = productName
     ? `${productName}重构推演白皮书.md`
@@ -251,16 +254,29 @@ export function ResultPanel({
               </Badge>
             )}
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={exportDisabled}
-            onClick={handleExport}
-            className="flex-shrink-0 h-8 text-xs border-border text-muted-foreground hover:text-foreground hover:border-primary/40 hover:bg-primary/5 disabled:opacity-30 gap-1.5"
-          >
-            <FileDown className="w-3.5 h-3.5" />
-            导出为 .md 文件
-          </Button>
+          <div className="flex items-center gap-2">
+            {isGenerating && onCancel && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onCancel}
+                className="flex-shrink-0 h-8 text-xs border-rose-400/30 text-rose-400 hover:text-rose-300 hover:bg-rose-400/10 hover:border-rose-400/50 gap-1.5"
+              >
+                <Square className="w-3 h-3" />
+                停止生成
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={exportDisabled}
+              onClick={handleExport}
+              className="flex-shrink-0 h-8 text-xs border-border text-muted-foreground hover:text-foreground hover:border-primary/40 hover:bg-primary/5 disabled:opacity-30 gap-1.5"
+            >
+              <FileDown className="w-3.5 h-3.5" />
+              导出为 .md 文件
+            </Button>
+          </div>
         </div>
 
         {/* Loading status — shown during connecting phase, hidden when thinking starts */}
@@ -333,7 +349,16 @@ export function ResultPanel({
       </div>
 
       {/* Content Area */}
-      <div className="flex-1 flex flex-col min-h-[400px] overflow-hidden">
+      <div
+        data-streaming-state={
+          streamInterrupted ? "interrupted"
+          : isStreaming ? "streaming"
+          : isGenerating ? "connecting"
+          : hasResult ? "complete"
+          : "empty"
+        }
+        className="flex-1 flex flex-col min-h-[400px] overflow-hidden [contain:layout]"
+      >
         {showShortInputWarning ? (
           <ShortInputWarning onForceGenerate={onForceGenerate} onDismiss={onDismissWarning} />
         ) : streamInterrupted && (partialResult || streamingText) ? (
@@ -353,7 +378,7 @@ export function ResultPanel({
             retryStatus={retryStatus}
           />
         ) : isGenerating ? (
-          <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3 min-h-0">
+          <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3 min-h-[400px]">
             {retryStatus && retryStatus.attempt > 0 && (
               <div className="flex items-center gap-2 px-4 py-3 border rounded-lg text-sm bg-amber-400/5 border-amber-400/20 text-amber-400">
                 <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />
@@ -554,6 +579,7 @@ function StreamingState({
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const userScrolledUpRef = useRef(false);
+  const lastScrollHeightRef = useRef(0);
   const [userScrolledUp, setUserScrolledUp] = useState(false);
 
   useEffect(() => {
@@ -562,7 +588,6 @@ function StreamingState({
     const observer = new IntersectionObserver(
       ([entry]) => {
         userScrolledUpRef.current = !entry.isIntersecting;
-        setUserScrolledUp(!entry.isIntersecting);
       },
       { threshold: 0.1 }
     );
@@ -570,16 +595,29 @@ function StreamingState({
     return () => observer.disconnect();
   }, []);
 
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const isUp = distFromBottom > 50;
+    setUserScrolledUp((prev) => (prev !== isUp ? isUp : prev));
+  };
+
   useLayoutEffect(() => {
-    if (!userScrolledUpRef.current && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
+    const el = scrollRef.current;
+    if (!el || userScrolledUpRef.current) return;
+    if (el.scrollHeight === lastScrollHeightRef.current) return;
+    lastScrollHeightRef.current = el.scrollHeight;
+    el.scrollTop = el.scrollHeight;
   });
 
   const jumpToLatest = () => {
     userScrolledUpRef.current = false;
     setUserScrolledUp(false);
-    sentinelRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: "smooth",
+    });
   };
 
   const sectionKeys = [
@@ -592,7 +630,8 @@ function StreamingState({
   return (
     <div
       ref={scrollRef}
-      className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3 min-h-0"
+      onScroll={handleScroll}
+      className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3 min-h-[400px] overscroll-contain relative"
     >
       {/* Retry banner */}
       {retryStatus && retryStatus.attempt > 0 && (
@@ -607,7 +646,7 @@ function StreamingState({
 
       {/* Summary — skeleton or real content */}
       {partialResult?.summary ? (
-        <Card className="bg-primary/5 border-primary/20">
+        <Card className="bg-primary/5 border-primary/20 animate-fade-in-up">
           <CardContent className="p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="flex-1 min-w-0">
@@ -638,7 +677,7 @@ function StreamingState({
           </CardContent>
         </Card>
       ) : (
-        <Card className="bg-primary/5 border-primary/20">
+        <Card className="bg-primary/5 border-primary/20 min-h-[96px]">
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
               <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 flex-shrink-0">
@@ -677,12 +716,14 @@ function StreamingState({
             className="bg-card border border-border rounded-lg overflow-hidden flex-shrink-0"
           >
             {hasData ? (
-              <StreamingSection
-                config={config}
-                data={partialResult![key] as unknown[]}
-                sectionKey={key}
-                isComplete={completedSections?.has(key) ?? false}
-              />
+              <div className="animate-fade-in-up">
+                <StreamingSection
+                  config={config}
+                  data={partialResult![key] as unknown[]}
+                  sectionKey={key}
+                  isComplete={completedSections?.has(key) ?? false}
+                />
+              </div>
             ) : (
               <SectionSkeleton config={config} />
             )}
@@ -691,11 +732,11 @@ function StreamingState({
       })}
 
       {/* Scroll sentinel */}
-      <div ref={sentinelRef} className="h-px" />
+      <div ref={sentinelRef} className="h-4" />
 
-      {/* Jump to latest button */}
+      {/* Jump to latest button — absolute to avoid layout shift */}
       {userScrolledUp && (
-        <div className="sticky bottom-3 flex justify-center pointer-events-none">
+        <div className="absolute bottom-3 left-0 right-0 flex justify-center pointer-events-none z-10">
           <Button
             variant="outline"
             size="sm"
@@ -714,7 +755,7 @@ function StreamingState({
 function SectionSkeleton({ config }: { config: SectionConfig }) {
   const Icon = config.icon;
   return (
-    <div className="px-4 py-3.5">
+    <div className="px-4 py-3.5 min-h-[56px]">
       <div className="flex items-center gap-3">
         <div className="flex items-center justify-center w-7 h-7 rounded-md bg-muted">
           <Icon className={`w-3.5 h-3.5 ${config.accentColor} opacity-40`} />
@@ -801,7 +842,8 @@ function StreamingSectionItems({
         {pts.map((p, i) => (
           <div
             key={i}
-            className="flex gap-3 p-3 bg-amber-400/5 border border-amber-400/10 rounded-md"
+            className="flex gap-3 p-3 bg-amber-400/5 border border-amber-400/10 rounded-md animate-fade-in-up"
+            style={{ animationDelay: `${i * 50}ms` }}
           >
             <div className="w-5 h-5 flex items-center justify-center rounded-full bg-amber-400/10 text-amber-400 text-[10px] font-bold flex-shrink-0 mt-0.5">
               {i + 1}
@@ -865,7 +907,8 @@ function StreamingSectionItems({
         {nodes.map((n, i) => (
           <div
             key={i}
-            className="grid grid-cols-[1fr_1.5fr_1.5fr_1fr_80px] gap-2 items-start p-3 bg-primary/5 border border-primary/10 rounded-md"
+            className="grid grid-cols-[1fr_1.5fr_1.5fr_1fr_80px] gap-2 items-start p-3 bg-primary/5 border border-primary/10 rounded-md animate-fade-in-up"
+            style={{ animationDelay: `${i * 50}ms` }}
           >
             <p className="text-xs font-medium text-foreground">{n.stage}</p>
             <div className="text-xs text-muted-foreground">
@@ -891,7 +934,8 @@ function StreamingSectionItems({
         {mcps.map((m, i) => (
           <div
             key={i}
-            className="flex gap-3 p-3 bg-emerald-400/5 border border-emerald-400/10 rounded-md"
+            className="flex gap-3 p-3 bg-emerald-400/5 border border-emerald-400/10 rounded-md animate-fade-in-up"
+            style={{ animationDelay: `${i * 50}ms` }}
           >
             <div className="w-5 h-5 flex items-center justify-center rounded-full bg-emerald-400/10 text-emerald-400 text-[10px] font-bold flex-shrink-0 mt-0.5">
               {i + 1}
@@ -925,7 +969,8 @@ function StreamingSectionItems({
         {hitls.map((h, i) => (
           <div
             key={i}
-            className="flex gap-3 p-3 bg-violet-400/5 border border-violet-400/10 rounded-md"
+            className="flex gap-3 p-3 bg-violet-400/5 border border-violet-400/10 rounded-md animate-fade-in-up"
+            style={{ animationDelay: `${i * 50}ms` }}
           >
             <div className="w-5 h-5 flex items-center justify-center rounded-full bg-violet-400/10 text-violet-400 text-[10px] font-bold flex-shrink-0 mt-0.5">
               {i + 1}
@@ -995,7 +1040,7 @@ function ResultContent({
   ];
 
   return (
-    <div className="flex-1 overflow-y-auto pr-1">
+    <div className="flex-1 overflow-y-auto pr-1 animate-fade-in-up">
       {isCachedResult && <CachedResultBanner />}
       {/* Summary header */}
       <Card className="mb-4 bg-primary/5 border-primary/20">

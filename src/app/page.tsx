@@ -52,6 +52,7 @@ export default function Home() {
   const detectedSectionsRef = useRef<Set<string>>(new Set());
   const detectedItemIndicesRef = useRef<Map<string, Set<number>>>(new Map());
   const streamingTextRef = useRef("");
+  const abortControllerRef = useRef<AbortController | null>(null);
   const [completedSections, setCompletedSections] = useState<Set<string>>(
     new Set()
   );
@@ -83,6 +84,9 @@ export default function Home() {
     streamingTextRef.current = "";
     setCompletedSections(new Set());
 
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
       const res = await fetch("/api/generate", {
         method: "POST",
@@ -91,6 +95,7 @@ export default function Home() {
           productName: productName.trim(),
           solutionContent: schemeText.trim(),
         }),
+        signal: controller.signal,
       });
 
       if (!res.ok) {
@@ -262,12 +267,19 @@ export default function Home() {
           }
         }
       }
-    } catch {
+    } catch (err: unknown) {
       setRetryStatus(null);
 
+      const isAbort = err instanceof DOMException && err.name === "AbortError";
       const hasPartialContent = !!streamingTextRef.current;
 
-      if (hasPartialContent) {
+      if (isAbort) {
+        if (hasPartialContent) {
+          setStreamInterrupted(true);
+          toast.info("已停止生成，部分内容已保留");
+        }
+        // If no content yet, just silently reset to empty state
+      } else if (hasPartialContent) {
         setStreamInterrupted(true);
         toast.error("生成中断，已输出部分内容如下。可点击「重新生成」按钮重试");
       } else {
@@ -281,6 +293,7 @@ export default function Home() {
         }
       }
     } finally {
+      abortControllerRef.current = null;
       setIsGenerating(false);
     }
   };
@@ -292,6 +305,10 @@ export default function Home() {
 
   const handleForceGenerate = () => {
     handleGenerate(true);
+  };
+
+  const handleCancel = () => {
+    abortControllerRef.current?.abort();
   };
 
   const handleDismissWarning = () => {
@@ -373,6 +390,7 @@ export default function Home() {
             streamInterrupted={streamInterrupted}
             onForceGenerate={handleForceGenerate}
             onDismissWarning={handleDismissWarning}
+            onCancel={handleCancel}
           />
         </div>
       </main>
