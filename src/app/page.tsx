@@ -43,6 +43,7 @@ export default function Home() {
   const [errorSuggestion, setErrorSuggestion] = useState<string | undefined>(
     undefined
   );
+  const [streamInterrupted, setStreamInterrupted] = useState(false);
   const [streamingText, setStreamingText] = useState("");
   const [thinkingText, setThinkingText] = useState("");
   const [partialResult, setPartialResult] = useState<
@@ -72,6 +73,7 @@ export default function Home() {
     setShowShortInputWarning(false);
     setIsCachedResult(false);
     setErrorSuggestion(undefined);
+    setStreamInterrupted(false);
     setRetryStatus(null);
     setStreamingText("");
     setThinkingText("");
@@ -130,8 +132,11 @@ export default function Home() {
           }
 
           if (event.type === "thinking_text") {
+            setRetryStatus(null);
             setThinkingText(event.text);
           } else if (event.type === "token") {
+            setRetryStatus(null);
+
             streamingTextRef.current += event.token;
             setStreamingText(streamingTextRef.current);
 
@@ -215,9 +220,17 @@ export default function Home() {
               message: event.message,
             });
           } else if (event.type === "result") {
-            setStreamingText("");
-            setPartialResult(undefined);
             if (!event.success) {
+              // If we have partial content, show interrupted state instead of cache/error
+              if (streamingTextRef.current) {
+                setStreamInterrupted(true);
+                setRetryStatus(null);
+                toast.error("生成中断，已输出部分内容如下。您可尝试重新生成");
+                return;
+              }
+
+              setStreamingText("");
+              setPartialResult(undefined);
               setErrorSuggestion(event.suggestion);
               if (event.rawText) {
                 setRawTextFallback(event.rawText);
@@ -238,6 +251,8 @@ export default function Home() {
               return;
             }
 
+            setStreamingText("");
+            setPartialResult(undefined);
             setCachedResult(
               productName.trim(),
               schemeText.trim(),
@@ -250,13 +265,20 @@ export default function Home() {
     } catch {
       setRetryStatus(null);
 
-      const cached = getCachedResult(productName.trim(), schemeText.trim());
-      if (cached) {
-        setResultData(cached);
-        setIsCachedResult(true);
-        toast.warning("网络请求失败，已为您加载缓存数据");
+      const hasPartialContent = !!streamingTextRef.current;
+
+      if (hasPartialContent) {
+        setStreamInterrupted(true);
+        toast.error("生成中断，已输出部分内容如下。可点击「重新生成」按钮重试");
       } else {
-        toast.error("网络请求失败，请检查网络连接后重试");
+        const cached = getCachedResult(productName.trim(), schemeText.trim());
+        if (cached) {
+          setResultData(cached);
+          setIsCachedResult(true);
+          toast.warning("网络请求失败，已为您加载缓存数据");
+        } else {
+          toast.error("网络请求失败，请检查网络连接后重试");
+        }
       }
     } finally {
       setIsGenerating(false);
@@ -348,6 +370,7 @@ export default function Home() {
             retryStatus={retryStatus}
             isCachedResult={isCachedResult}
             errorSuggestion={errorSuggestion}
+            streamInterrupted={streamInterrupted}
             onForceGenerate={handleForceGenerate}
             onDismissWarning={handleDismissWarning}
           />

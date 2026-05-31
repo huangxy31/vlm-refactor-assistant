@@ -47,6 +47,7 @@ interface ResultPanelProps {
   retryStatus?: RetryStatus | null;
   isCachedResult?: boolean;
   errorSuggestion?: string;
+  streamInterrupted?: boolean;
   onForceGenerate?: () => void;
   onDismissWarning?: () => void;
 }
@@ -114,6 +115,7 @@ export function ResultPanel({
   retryStatus,
   isCachedResult,
   errorSuggestion,
+  streamInterrupted,
   onForceGenerate,
   onDismissWarning,
 }: ResultPanelProps) {
@@ -334,6 +336,12 @@ export function ResultPanel({
       <div className="flex-1 flex flex-col min-h-[400px] overflow-hidden">
         {showShortInputWarning ? (
           <ShortInputWarning onForceGenerate={onForceGenerate} onDismiss={onDismissWarning} />
+        ) : streamInterrupted && (partialResult || streamingText) ? (
+          <StreamInterruptedState
+            partialResult={partialResult}
+            completedSections={completedSections}
+            onRegenerate={onForceGenerate}
+          />
         ) : !hasResult && !isGenerating && !rawTextFallback ? (
           <EmptyState />
         ) : data ? (
@@ -371,6 +379,107 @@ export function ResultPanel({
         )}
       </div>
     </section>
+  );
+}
+
+function StreamInterruptedState({
+  partialResult,
+  completedSections,
+  onRegenerate,
+}: {
+  partialResult?: PartialGenerationResponse;
+  completedSections?: Set<string>;
+  onRegenerate?: () => void;
+}) {
+  const sectionKeys = [
+    "painPoints",
+    "vlmNodes",
+    "mcpIntegration",
+    "hitlDesign",
+  ] as const;
+
+  return (
+    <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3 min-h-0">
+      {/* Interruption banner */}
+      <div className="flex items-start gap-3 px-4 py-3 border rounded-lg bg-amber-400/5 border-amber-400/20">
+        <div className="flex items-center justify-center w-8 h-8 rounded-full bg-amber-400/10 flex-shrink-0 mt-0.5">
+          <OctagonAlert className="w-4 h-4 text-amber-400" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-amber-400">生成中断</p>
+          <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+            网络连接异常，已输出部分内容如下。您可尝试
+            <Button
+              variant="link"
+              size="sm"
+              onClick={onRegenerate}
+              className="h-auto p-0 text-xs text-amber-400 hover:text-amber-300 underline underline-offset-2"
+            >
+              重新生成
+            </Button>
+          </p>
+        </div>
+      </div>
+
+      {/* Summary — partial or skeleton */}
+      {partialResult?.summary ? (
+        <Card className="bg-primary/5 border-primary/20">
+          <CardContent className="p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-primary font-medium uppercase tracking-widest mb-1">
+                  执行摘要（部分）
+                </p>
+                <h2 className="text-base font-semibold text-foreground leading-snug">
+                  {partialResult.productName || "产品"}重构推演评估报告
+                </h2>
+                <div className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
+                  <RenderMarkdown content={partialResult.summary} />
+                </div>
+              </div>
+              {partialResult.score != null && (
+                <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+                  <div className="text-right">
+                    <p className="text-[10px] text-muted-foreground">
+                      替代潜力评分
+                    </p>
+                    <p className="text-2xl font-bold text-primary font-mono">
+                      {partialResult.score}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">/ 100</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {/* Section cards */}
+      {sectionKeys.map((key, idx) => {
+        const config = SECTION_CONFIGS[idx];
+        const hasData =
+          partialResult &&
+          partialResult[key] &&
+          (partialResult[key] as unknown[]).length > 0;
+
+        if (!hasData) return null;
+
+        return (
+          <div
+            key={key}
+            className="bg-card border border-border rounded-lg overflow-hidden flex-shrink-0"
+          >
+            <StreamingSection
+              config={config}
+              data={partialResult![key] as unknown[]}
+              sectionKey={key}
+              isComplete={completedSections?.has(key) ?? false}
+            />
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
